@@ -26,6 +26,7 @@ from live_execution.safety import evaluate_live_safety, load_config as load_live
 from tools.reset_state import reset_state
 from tools.system_health import run_health_check
 from tools.telegram_diagnostics import send_test as send_telegram_test
+from tools.agent_supervisor import restart as restart_agents, start as start_agents, status as agents_process_status, stop as stop_agents
 
 FILES = {
     "regime"         : "agents/master_trader/regime.json",
@@ -767,6 +768,26 @@ def api_reset_state():
     )
     _invalidate_cache()
     return jsonify(result)
+
+
+@app.route("/api/agents/status", methods=["GET"])
+def api_agents_status():
+    return jsonify(agents_process_status())
+
+
+@app.route("/api/agents/control", methods=["POST"])
+def api_agents_control():
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "status")).lower()
+    actions = {
+        "status": agents_process_status,
+        "start": start_agents,
+        "stop": stop_agents,
+        "restart": restart_agents,
+    }
+    if action not in actions:
+        return jsonify({"ok": False, "error": "Unsupported action {}".format(action)}), 400
+    return jsonify(actions[action]())
 
 
 @app.route("/favicon.ico")
@@ -2582,10 +2603,13 @@ button,input,select{font:inherit}
             <div class="actions" style="justify-content:flex-start;margin-bottom:10px">
               <button class="btn" onclick="runSystemHealth()">Run Health</button>
               <button class="btn good" onclick="testTelegram()">Test Telegram</button>
+              <button class="btn good" onclick="controlAgents('start')">Start Agents</button>
+              <button class="btn" onclick="controlAgents('restart')">Restart Agents</button>
+              <button class="btn danger" onclick="controlAgents('stop')">Stop Agents</button>
               <button class="btn danger" onclick="resetPaper(false)">Reset Paper</button>
               <button class="btn danger" onclick="resetPaper(true)">Clear Runtime</button>
             </div>
-            <div class="note" style="margin-bottom:8px">Reset Paper backs up local state and resets the paper balance to $10,000. Clear Runtime also removes stale agent/signal JSON files; restart agents after using it.</div>
+            <div class="note" style="margin-bottom:8px">Agent controls manage supervised background `launch.py`. Reset Paper backs up local state and resets the paper balance to $10,000. Clear Runtime also removes stale agent/signal JSON files; restart agents after using it.</div>
             <div class="log" id="ops-output">No operation run yet.</div>
           </div>
         </section>
@@ -2714,6 +2738,29 @@ async function resetPaper(includeRuntime){
     ].join('\n'), 'ok');
     refreshAll();
   }catch(e){setOps('Reset failed: '+e.message,'error');}
+}
+
+async function controlAgents(action){
+  const labels={start:'start the full agent orchestra',stop:'stop the supervised agent orchestra',restart:'restart the full agent orchestra'};
+  if(action!=='start'&&!confirm('Are you sure you want to '+(labels[action]||action)+'?'))return;
+  setOps('Agent '+action+' requested...', 'warn');
+  try{
+    const r=await fetch('/api/agents/control',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action})
+    });
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    setOps([
+      'Action: '+(d.action||action),
+      'State: '+(d.state||'unknown'),
+      'PID: '+(d.pid||'--'),
+      'Log: '+(d.log_file||'--'),
+      d.message||''
+    ].join('\n'), d.running?'ok':'warn');
+    setTimeout(refreshAll,1500);
+  }catch(e){setOps('Agent control failed: '+e.message,'error');}
 }
 
 function renderPositions(positions){

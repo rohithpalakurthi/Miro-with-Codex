@@ -37,6 +37,8 @@ REQUIRED_PATHS = [
 ]
 
 RUNTIME_FILES = {
+    "agent_supervisor": "runtime/agent_supervisor.json",
+    "agents_pid": "runtime/agents.pid",
     "agents_status": "paper_trading/logs/agents_status.json",
     "paper_state": "paper_trading/logs/state.json",
     "live_price": "dashboard/frontend/live_price.json",

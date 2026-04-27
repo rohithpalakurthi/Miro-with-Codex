@@ -7,5 +7,9 @@ if (-not (Test-Path $python)) {
   $python = "python"
 }
 
-Write-Host "Starting full MIRO agent orchestra in supervised background mode..." -ForegroundColor Cyan
-& $python "tools\agent_supervisor.py" start
+$action = "status"
+if ($args.Count -gt 0) {
+  $action = $args[0]
+}
+
+& $python "tools\agent_supervisor.py" $action

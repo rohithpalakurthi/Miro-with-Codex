@@ -7,6 +7,7 @@ This project is designed to run from a clean source tree while keeping live stat
 - `setup.ps1` creates `.venv`, installs dependencies, creates `.env` from `.env.example` if missing, prepares runtime folders, and runs a health check.
 - `run_dashboard.ps1` starts the dashboard at `http://localhost:5055`.
 - `run_agents.ps1` starts the full agent orchestra through `launch.py`.
+- `agent_control.ps1 status|start|stop|restart` manages the supervised `launch.py` process.
 - `health_check.ps1` runs the same system health engine exposed in the dashboard.
 - `protect_main.ps1` attempts to enable GitHub branch protection with `gh`; if unavailable, enable it in GitHub UI.
 
@@ -18,6 +19,7 @@ Open `http://localhost:5055` and use **System Operations**:
 - `Test Telegram` sends a real Telegram message using `.env` credentials.
 - `Reset Paper` backs up and resets paper trading state to `$10,000`.
 - `Clear Runtime` backs up paper/runtime files, removes stale local runtime JSON, and should be followed by restarting agents.
+- `Start/Stop/Restart Agents` controls the supervised background `launch.py` process and writes PID/status to `runtime/`.
 
 ## Git safety
 

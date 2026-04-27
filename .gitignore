@@ -34,6 +34,8 @@ tradingview/*.json
 live_execution/live_safety_status.json
 live_execution/bridge/*.json
 backups/
+runtime/
+dashboard/frontend/live_price.json
 
 # Node
 node_modules/

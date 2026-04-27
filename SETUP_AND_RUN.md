@@ -2,6 +2,28 @@
 
 Use this file when starting the project yourself after a restart.
 
+## Fast Path
+
+```powershell
+cd "D:\Trading Project with Codex\MiroTrade-Autonomous-System"
+.\setup.ps1
+.\run_dashboard.ps1
+```
+
+Full agent orchestra:
+
+```powershell
+.\run_agents.ps1
+```
+
+Health check:
+
+```powershell
+.\health_check.ps1
+```
+
+Operations runbook: `docs/OPERATIONS.md`.
+
 ## 1. Open MT5 First
 
 Open MetaTrader 5, log in to the correct demo/live account, and keep it running.
@@ -9,7 +31,7 @@ Open MetaTrader 5, log in to the correct demo/live account, and keep it running.
 ## 2. Open PowerShell In The Project
 
 ```powershell
-cd "D:\Trading Project with Codex\MiroTrade-Framework"
+cd "D:\Trading Project with Codex\MiroTrade-Autonomous-System"
 ```
 
 ## 3. Install Dependencies

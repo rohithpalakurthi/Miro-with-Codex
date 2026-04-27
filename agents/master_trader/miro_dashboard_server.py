@@ -23,6 +23,9 @@ from backtesting.research.promotion import (
     summarize_experiments,
 )
 from live_execution.safety import evaluate_live_safety, load_config as load_live_safety_config, save_config as save_live_safety_config
+from tools.reset_state import reset_state
+from tools.system_health import run_health_check
+from tools.telegram_diagnostics import send_test as send_telegram_test
 
 FILES = {
     "regime"         : "agents/master_trader/regime.json",
@@ -740,6 +743,30 @@ def api_multisym():
 @app.route("/api/health")
 def api_health():
     return jsonify({"status": "ok", "time": str(datetime.now())})
+
+
+@app.route("/api/system-health", methods=["GET"])
+def api_system_health():
+    return jsonify(run_health_check())
+
+
+@app.route("/api/telegram-test", methods=["POST"])
+def api_telegram_test():
+    return jsonify(send_telegram_test())
+
+
+@app.route("/api/reset-state", methods=["POST"])
+def api_reset_state():
+    payload = request.get_json(silent=True) or {}
+    paper_balance = float(payload.get("paper_balance", 10000.0))
+    include_runtime = bool(payload.get("include_runtime", False))
+    result = reset_state(
+        paper_balance=paper_balance,
+        include_runtime=include_runtime,
+        yes=True,
+    )
+    _invalidate_cache()
+    return jsonify(result)
 
 
 @app.route("/favicon.ico")
@@ -2550,6 +2577,20 @@ button,input,select{font:inherit}
         </section>
 
         <section class="section">
+          <div class="section-head"><div class="section-title">System Operations</div><span class="pill" id="ops-pill">READY</span></div>
+          <div class="section-body">
+            <div class="actions" style="justify-content:flex-start;margin-bottom:10px">
+              <button class="btn" onclick="runSystemHealth()">Run Health</button>
+              <button class="btn good" onclick="testTelegram()">Test Telegram</button>
+              <button class="btn danger" onclick="resetPaper(false)">Reset Paper</button>
+              <button class="btn danger" onclick="resetPaper(true)">Clear Runtime</button>
+            </div>
+            <div class="note" style="margin-bottom:8px">Reset Paper backs up local state and resets the paper balance to $10,000. Clear Runtime also removes stale agent/signal JSON files; restart agents after using it.</div>
+            <div class="log" id="ops-output">No operation run yet.</div>
+          </div>
+        </section>
+
+        <section class="section">
           <div class="section-head"><div class="section-title">Autonomy Lifecycle</div><span class="pill" id="life-stage">--</span></div>
           <div class="section-body">
             <div class="metric-row"><span>Discovery accepted</span><b id="disc-accepted">--</b></div>
@@ -2619,6 +2660,60 @@ async function closeAllPositions(){
   const r=await fetch('/api/close-all',{method:'POST'});const d=await r.json();
   alert(d.status==='ok'?'Closed '+(d.closed||[]).length+' position(s).':'Error: '+(d.message||'unknown'));
   refreshAll();
+}
+
+function setOps(text, kind){
+  const out=$('ops-output'), pill=$('ops-pill');
+  if(out)out.textContent=text;
+  if(pill){pill.textContent=(kind||'READY').toUpperCase();cls(pill,kind==='ok'?'green':kind==='warn'?'amber':kind==='error'?'red':'');}
+}
+
+async function runSystemHealth(){
+  setOps('Running health check...', 'warn');
+  try{
+    const r=await fetch('/api/system-health?t='+Date.now());
+    const d=await r.json();
+    setOps([
+      'Status: '+String(d.status||'unknown').toUpperCase()+' | Score: '+(d.score||0)+'%',
+      'Blockers: '+(d.blocker_count||0)+' | Warnings: '+(d.warning_count||0),
+      '',
+      'Next actions:',
+      ...((d.next_actions||[]).slice(0,8).map(x=>'- '+x))
+    ].join('\n'), d.status==='ok'?'ok':d.status==='warn'?'warn':'error');
+  }catch(e){setOps('Health check failed: '+e.message,'error');}
+}
+
+async function testTelegram(){
+  if(!confirm('Send a real Telegram test message now?'))return;
+  setOps('Sending Telegram test...', 'warn');
+  try{
+    const r=await fetch('/api/telegram-test',{method:'POST'});
+    const d=await r.json();
+    setOps(d.ok?'Telegram test message sent.':'Telegram test failed: '+JSON.stringify(d.error||d), d.ok?'ok':'error');
+  }catch(e){setOps('Telegram test failed: '+e.message,'error');}
+}
+
+async function resetPaper(includeRuntime){
+  const msg=includeRuntime
+    ? 'Clear runtime JSON and reset paper balance to $10,000? This creates backups but agents should be restarted after.'
+    : 'Reset paper balance/trades to $10,000? This creates a backup first.';
+  if(!confirm(msg))return;
+  setOps('Resetting local state...', 'warn');
+  try{
+    const r=await fetch('/api/reset-state',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({paper_balance:10000,include_runtime:includeRuntime})
+    });
+    const d=await r.json();
+    setOps([
+      'Reset mode: '+(d.mode||'unknown'),
+      'Backup: '+(d.backup_dir||'--'),
+      'Runtime cleared: '+(d.runtime_cleared?'YES':'NO'),
+      d.note||''
+    ].join('\n'), 'ok');
+    refreshAll();
+  }catch(e){setOps('Reset failed: '+e.message,'error');}
 }
 
 function renderPositions(positions){

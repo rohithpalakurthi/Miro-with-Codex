@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from flask import Flask, jsonify, request
 from flask import Response
 from flask_cors import CORS
+from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -119,6 +120,111 @@ CORS(app)
 _cache = {}
 _cache_time = {}
 CACHE_TTL = 2
+ROOT_PATH = Path(__file__).resolve().parents[2]
+
+
+SETUP_FIXES = {
+    "env MT5_LOGIN": {
+        "category": "Credentials",
+        "severity": "blocker",
+        "title": "Add MT5 login",
+        "why": "Dashboard can run, but MT5 account reads and live/demo reconciliation need this value.",
+        "how": "Edit .env and set MT5_LOGIN to your account login.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env MT5_PASSWORD": {
+        "category": "Credentials",
+        "severity": "blocker",
+        "title": "Add MT5 password",
+        "why": "Required for MT5 login. This must be entered by you; the assistant should not guess it.",
+        "how": "Edit .env and set MT5_PASSWORD.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env MT5_SERVER": {
+        "category": "Credentials",
+        "severity": "blocker",
+        "title": "Add MT5 server",
+        "why": "MT5 needs the broker server name to connect to the correct account.",
+        "how": "Edit .env and set MT5_SERVER, for example your broker demo/live server name.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env TELEGRAM_BOT_TOKEN": {
+        "category": "Alerts",
+        "severity": "warn",
+        "title": "Add Telegram bot token",
+        "why": "Incident and setup notifications will not be delivered without it.",
+        "how": "Create a bot with BotFather, then add TELEGRAM_BOT_TOKEN to .env.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env TELEGRAM_CHAT_ID": {
+        "category": "Alerts",
+        "severity": "warn",
+        "title": "Add Telegram chat id",
+        "why": "The bot needs a target chat to send notifications.",
+        "how": "Message your bot once, get your chat id, then add TELEGRAM_CHAT_ID to .env.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env OPENAI_API_KEY": {
+        "category": "AI",
+        "severity": "warn",
+        "title": "Add OpenAI key",
+        "why": "Optional AI reasoning and strategy research agents may be limited without it.",
+        "how": "Add OPENAI_API_KEY to .env if you want AI-enabled research workflows.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env ANTHROPIC_API_KEY": {
+        "category": "AI",
+        "severity": "warn",
+        "title": "Add Anthropic key",
+        "why": "Optional alternate AI research workflows may be limited without it.",
+        "how": "Add ANTHROPIC_API_KEY to .env if you use that provider.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "env NGROK_AUTHTOKEN": {
+        "category": "Remote Access",
+        "severity": "warn",
+        "title": "Add ngrok auth token",
+        "why": "Optional mobile/remote tunnel support needs this token.",
+        "how": "Add NGROK_AUTHTOKEN to .env only if you want remote tunnel access.",
+        "command": "notepad .env",
+        "action": "open_env",
+        "auto": False,
+    },
+    "port dashboard_5055": {
+        "category": "Services",
+        "severity": "warn",
+        "title": "Start dashboard",
+        "why": "The browser UI needs the Flask dashboard service on port 5055.",
+        "how": "Run the dashboard starter script.",
+        "command": ".\\run_dashboard.ps1",
+        "action": "start_dashboard",
+        "auto": False,
+    },
+    "port tradingview_webhook_5056": {
+        "category": "Services",
+        "severity": "warn",
+        "title": "Start TradingView webhook",
+        "why": "TradingView alerts cannot be received unless the webhook bridge is running.",
+        "how": "Start the agents; the bridge/webhook service is part of the runtime stack.",
+        "command": ".\\agent_control.ps1 start",
+        "action": "start_agents",
+        "auto": True,
+    },
+}
 
 
 def _load(key):
@@ -136,6 +242,94 @@ def _load(key):
     except Exception:
         pass
     return {}
+
+
+def _setup_fix_for(check):
+    name = check.get("name", "")
+    base = SETUP_FIXES.get(name, {})
+    if name.startswith("path "):
+        rel = name.replace("path ", "", 1)
+        base = {
+            "category": "Files",
+            "severity": "blocker",
+            "title": "Create required path",
+            "why": "The system expects this file or folder for startup.",
+            "how": "Run setup repair to create missing folders or bootstrap known files.",
+            "command": ".\\setup.ps1",
+            "action": "repair_paths",
+            "auto": True,
+        }
+        if rel.endswith(".py"):
+            base["auto"] = False
+            base["how"] = "This source file is missing. Restore the repo file from GitHub or check your branch."
+            base["command"] = "git status"
+    elif name.startswith("runtime "):
+        base = {
+            "category": "Runtime",
+            "severity": "warn",
+            "title": "Refresh runtime state",
+            "why": "Fresh runtime files prove agents are actively writing state.",
+            "how": "Start or restart agents/watchdog, then rerun setup scan.",
+            "command": ".\\agent_control.ps1 start",
+            "action": "start_agents",
+            "auto": True,
+        }
+    payload = {
+        "name": name,
+        "status": check.get("status"),
+        "detail": check.get("detail"),
+        "impact": check.get("impact"),
+        "category": base.get("category", "General"),
+        "severity": base.get("severity", check.get("status", "warn")),
+        "title": base.get("title", name),
+        "why": base.get("why", check.get("impact", "")),
+        "how": base.get("how", "Review this check and rerun the health scan."),
+        "command": base.get("command", ".\\health_check.ps1"),
+        "action": base.get("action", "health_check"),
+        "auto": bool(base.get("auto", False)),
+    }
+    return payload
+
+
+def _setup_wizard_payload():
+    health = run_health_check()
+    checks = health.get("checks", [])
+    issues = [_setup_fix_for(c) for c in checks if c.get("status") != "ok"]
+    grouped = {}
+    for issue in issues:
+        grouped.setdefault(issue["category"], []).append(issue)
+    return {
+        "status": health.get("status"),
+        "score": health.get("score"),
+        "blocker_count": health.get("blocker_count", 0),
+        "warning_count": health.get("warning_count", 0),
+        "steps": checks,
+        "issues": issues,
+        "groups": grouped,
+        "next_actions": health.get("next_actions", []),
+        "commands": [
+            ".\\setup.ps1",
+            ".\\run_dashboard.ps1",
+            ".\\agent_control.ps1 start",
+            ".\\health_check.ps1",
+        ],
+    }
+
+
+def _repair_setup_paths():
+    created = []
+    for rel in ("logs", "paper_trading/logs", "backtesting/reports", "live_execution/bridge", "runtime"):
+        path = ROOT_PATH / rel
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+            created.append(rel)
+    env_path = ROOT_PATH / ".env"
+    example_path = ROOT_PATH / ".env.example"
+    env_created = False
+    if not env_path.exists() and example_path.exists():
+        env_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
+        env_created = True
+    return {"ok": True, "created": created, "env_created": env_created}
 
 
 def _invalidate_cache(*keys):
@@ -1220,20 +1414,39 @@ def api_strategy_lab():
 
 @app.route("/api/setup-wizard", methods=["GET"])
 def api_setup_wizard():
-    health = run_health_check()
-    required = [c for c in health.get("checks", []) if c["name"].startswith("env ") or c["name"].startswith("port ") or c["name"].startswith("path ")]
-    return jsonify({
-        "status": health.get("status"),
-        "score": health.get("score"),
-        "steps": required,
-        "next_actions": health.get("next_actions", []),
-        "commands": [
-            ".\\setup.ps1",
-            ".\\run_dashboard.ps1",
-            ".\\agent_control.ps1 start",
-            ".\\health_check.ps1",
-        ],
-    })
+    return jsonify(_setup_wizard_payload())
+
+
+@app.route("/api/setup-wizard/fix", methods=["POST"])
+def api_setup_wizard_fix():
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "scan")).lower()
+    if action == "repair_paths":
+        result = _repair_setup_paths()
+    elif action == "start_agents":
+        result = start_agents()
+    elif action == "restart_agents":
+        result = restart_agents()
+    elif action == "start_watchdog":
+        result = start_watchdog()
+    elif action == "telegram_test":
+        result = send_telegram_test()
+    elif action == "lock_live":
+        result = lock_live_mode("Setup wizard safety lock")
+    elif action == "scan":
+        result = _setup_wizard_payload()
+    elif action == "open_env":
+        result = {
+            "ok": False,
+            "manual": True,
+            "message": "Open .env and add the missing value. For safety, credentials are not auto-filled by the dashboard.",
+            "command": "notepad .env",
+        }
+    else:
+        return jsonify({"ok": False, "error": "Unsupported setup action {}".format(action)}), 400
+    audit("setup_wizard_{}".format(action), result)
+    _invalidate_cache()
+    return jsonify({"action": action, "result": result, "wizard": _setup_wizard_payload()})
 
 
 @app.route("/favicon.ico")
@@ -4034,9 +4247,15 @@ def _risk_timeline_page():
 
 
 def _setup_page():
-    body = """<div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Setup Checklist</h3><div id="steps">Loading...</div></div>"""
-    script = """async function load(){const d=await(await fetch('/api/setup-wizard')).json();document.getElementById('commands').innerHTML=(d.commands||[]).map(c=>`<div class="row"><span>PowerShell</span><span>Command</span><span>${esc(c)}</span></div>`).join('');document.getElementById('steps').innerHTML=(d.steps||[]).map(s=>`<div class="row"><span class="${s.status==='ok'?'green':s.status==='warn'?'amber':'red'}">${esc(s.status)}</span><span>${esc(s.name)}</span><span>${esc(s.detail)} - ${esc(s.impact)}</span></div>`).join('')}load();"""
-    return _shared_shell("Setup Wizard", "Setup Wizard", "Guided environment, MT5, Telegram, ports, and first-run checks.", body, script)
+    body = """<div class="grid4" id="setupSummary"></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button></div><div id="fixOut" class="log">Ready.</div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
+    script = """
+async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}
+function issueCard(x){return `<div class="card" style="margin-bottom:10px"><h3>${esc(x.title)}</h3><div class="row"><span class="${x.status==='blocker'?'red':'amber'}">${esc(x.status)}</span><span>${esc(x.name)}</span><span>${esc(x.detail)}</span></div><div class="desc"><b>Impact:</b> ${esc(x.impact||x.why)}<br><b>How to fix:</b> ${esc(x.how)}<br><b>Command:</b> <span class="sub">${esc(x.command)}</span></div><div class="actions">${x.auto?`<button class="btn good" onclick="fix('${esc(x.action)}')">Fix safely</button>`:`<button class="btn" onclick="fix('${esc(x.action)}')">Manual steps</button>`}<button class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(x.command)}')">Copy command</button></div></div>`}
+function render(d){const healthClass=d.status==='ok'?'green':d.status==='warn'?'amber':'red';document.getElementById('setupSummary').innerHTML=[['Health',String(d.status||'--').toUpperCase(),healthClass],['Score',d.score??'--',healthClass],['Blockers',d.blocker_count||0,(d.blocker_count||0)?'red':'green'],['Warnings',d.warning_count||0,(d.warning_count||0)?'amber':'green']].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${esc(x[1])}</div></div>`).join('');document.getElementById('commands').innerHTML=(d.commands||[]).map(c=>`<div class="row"><span>PowerShell</span><span>Command</span><span>${esc(c)}</span></div>`).join('');const groups=d.groups||{};document.getElementById('issues').innerHTML=Object.keys(groups).length?Object.entries(groups).map(([g,items])=>`<div class="panel"><h3>${esc(g)}</h3>${items.map(issueCard).join('')}</div>`).join(''):'<div class="green">No setup issues detected. Continue paper/demo validation.</div>';document.getElementById('steps').innerHTML=(d.steps||[]).map(s=>`<div class="row"><span class="${s.status==='ok'?'green':s.status==='warn'?'amber':'red'}">${esc(s.status)}</span><span>${esc(s.name)}</span><span>${esc(s.detail)} - ${esc(s.impact)}</span></div>`).join('')}
+async function load(){render(await(await fetch('/api/setup-wizard')).json())}
+load();setInterval(load,10000);
+"""
+    return _shared_shell("Setup Wizard", "Setup Wizard", "Guided repair assistant for environment, MT5, Telegram, ports, runtime files, and safe service recovery.", body, script)
 
 
 def _autonomy_suite_page():

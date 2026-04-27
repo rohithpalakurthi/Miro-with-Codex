@@ -59,6 +59,16 @@ class OperationsPagesTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn(key, response.get_json())
 
+    def test_setup_wizard_fix_scan(self):
+        from agents.master_trader import miro_dashboard_server as server
+
+        client = server.app.test_client()
+        response = client.post("/api/setup-wizard/fix", json={"action": "scan"})
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIn("wizard", payload)
+        self.assertIn("issues", payload["wizard"])
+
     def test_scoreboard_records_metric_history(self):
         from agents.master_trader import miro_dashboard_server as server
 

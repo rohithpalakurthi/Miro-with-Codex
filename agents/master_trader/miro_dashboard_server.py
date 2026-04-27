@@ -39,6 +39,14 @@ from tools.daily_routine import run_daily_routine
 from tools.incident_alerts import send_incident
 from tools.live_mode_lock import lock as lock_live_mode, status as live_mode_lock_status, unlock as unlock_live_mode
 from tools.log_viewer import tail_log
+from tools.operations_state import (
+    audit,
+    create_config_snapshot,
+    list_config_snapshots,
+    recent_audit,
+    restore_config_snapshot,
+    risk_timeline,
+)
 from tools.watchdog import check_once as watchdog_check_once
 
 FILES = {
@@ -779,6 +787,7 @@ def api_reset_state():
         include_runtime=include_runtime,
         yes=True,
     )
+    audit("reset_state", result, detail="include_runtime={}".format(include_runtime))
     _invalidate_cache()
     return jsonify(result)
 
@@ -800,7 +809,9 @@ def api_agents_control():
     }
     if action not in actions:
         return jsonify({"ok": False, "error": "Unsupported action {}".format(action)}), 400
-    return jsonify(actions[action]())
+    result = actions[action]()
+    audit("agents_{}".format(action), result)
+    return jsonify(result)
 
 
 @app.route("/api/watchdog/status", methods=["GET"])
@@ -820,7 +831,9 @@ def api_watchdog_control():
     }
     if action not in actions:
         return jsonify({"ok": False, "error": "Unsupported action {}".format(action)}), 400
-    return jsonify(actions[action]())
+    result = actions[action]()
+    audit("watchdog_{}".format(action), result)
+    return jsonify(result)
 
 
 @app.route("/api/logs", methods=["GET"])
@@ -831,12 +844,16 @@ def api_logs():
 @app.route("/api/daily-routine", methods=["POST"])
 def api_daily_routine():
     payload = request.get_json(silent=True) or {}
-    return jsonify(run_daily_routine(execute_heavy=bool(payload.get("execute_heavy", False))))
+    result = run_daily_routine(execute_heavy=bool(payload.get("execute_heavy", False)))
+    audit("daily_routine", result)
+    return jsonify(result)
 
 
 @app.route("/api/incident-test", methods=["POST"])
 def api_incident_test():
-    return jsonify(send_incident("Manual dashboard incident test", "Operator tested Telegram incident alerting.", "info", throttle_seconds=0))
+    result = send_incident("Manual dashboard incident test", "Operator tested Telegram incident alerting.", "info", throttle_seconds=0)
+    audit("incident_test", result)
+    return jsonify(result)
 
 
 @app.route("/api/live-lock", methods=["GET", "POST"])
@@ -846,10 +863,82 @@ def api_live_lock():
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action", "status")).lower()
     if action == "unlock":
-        return jsonify(unlock_live_mode(actor="dashboard", minutes=int(payload.get("minutes", 30)), reason=str(payload.get("reason", "Dashboard unlock"))))
+        result = unlock_live_mode(actor="dashboard", minutes=int(payload.get("minutes", 30)), reason=str(payload.get("reason", "Dashboard unlock")))
+        audit("live_unlock", result)
+        return jsonify(result)
     if action == "lock":
-        return jsonify(lock_live_mode(str(payload.get("reason", "Dashboard lock"))))
+        result = lock_live_mode(str(payload.get("reason", "Dashboard lock")))
+        audit("live_lock", result)
+        return jsonify(result)
     return jsonify(live_mode_lock_status())
+
+
+@app.route("/api/ops/audit", methods=["GET"])
+def api_ops_audit():
+    return jsonify({"items": recent_audit(int(request.args.get("limit", 50)))})
+
+
+@app.route("/api/ops/config-snapshots", methods=["GET", "POST"])
+def api_config_snapshots():
+    if request.method == "GET":
+        return jsonify({"items": list_config_snapshots()})
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "snapshot")).lower()
+    if action == "restore":
+        return jsonify(restore_config_snapshot(str(payload.get("name", ""))))
+    return jsonify(create_config_snapshot(str(payload.get("label", "dashboard"))))
+
+
+@app.route("/api/ops/timeline", methods=["GET"])
+def api_ops_timeline():
+    return jsonify({"items": risk_timeline(int(request.args.get("limit", 80)))})
+
+
+def _scoreboard_payload():
+    paper = _load("paper_state") or {}
+    account = paper.get("account", {})
+    metrics = paper.get("metrics", {})
+    closed = paper.get("closed_trades") or (paper.get("trades", {}) or {}).get("closed", [])
+    pnl_values = [float(t.get("pnl", 0) or 0) for t in closed if isinstance(t, dict)]
+    avg_r = 0.0
+    r_values = [float(t.get("r_multiple", 0) or 0) for t in closed if isinstance(t, dict)]
+    if r_values:
+        avg_r = round(sum(r_values) / len(r_values), 2)
+    readiness = _build_autonomy_readiness()
+    return {
+        "balance": account.get("balance", paper.get("balance", 0)),
+        "equity": account.get("equity", account.get("balance", paper.get("balance", 0))),
+        "return_pct": account.get("return_pct", 0),
+        "drawdown_pct": account.get("drawdown_pct", 0),
+        "total_trades": metrics.get("total_closed_trades", len(closed)),
+        "win_rate": metrics.get("win_rate", 0),
+        "profit_factor": metrics.get("profit_factor", 0),
+        "realized_pnl": metrics.get("realized_pnl", sum(pnl_values)),
+        "avg_r": avg_r,
+        "best_trade": max(pnl_values) if pnl_values else 0,
+        "worst_trade": min(pnl_values) if pnl_values else 0,
+        "ready": readiness.get("ready", False),
+        "readiness_mode": readiness.get("mode", "blocked"),
+        "blocker_count": readiness.get("blocker_count", 0),
+        "warning_count": readiness.get("warning_count", 0),
+    }
+
+
+@app.route("/api/scoreboard", methods=["GET"])
+def api_scoreboard():
+    return jsonify(_scoreboard_payload())
+
+
+@app.route("/api/strategy-lab", methods=["GET"])
+def api_strategy_lab():
+    return jsonify({
+        "experiments": summarize_experiments("v15f"),
+        "recent": _recent_experiments(limit=20),
+        "promotion": resolve_promotion("v15f"),
+        "lifecycle": _load_strategy_lifecycle(),
+        "discovery": _load("autonomous_discovery"),
+        "portfolio": _load("strategy_portfolio"),
+    })
 
 
 @app.route("/favicon.ico")
@@ -2546,6 +2635,10 @@ button,input,select{font:inherit}
     </div>
     <nav class="nav">
       <a class="active" href="/">Command Center</a>
+      <a href="/operations">Operations</a>
+      <a href="/scoreboard">Scoreboard</a>
+      <a href="/strategy-lab">Strategy Lab</a>
+      <a href="/risk-timeline">Risk Timeline</a>
       <a href="/pipeline">Pipeline Flow</a>
       <a href="/rules">Rules Control</a>
       <a href="/legacy">Legacy Dashboard</a>
@@ -3166,6 +3259,10 @@ html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-f
     <nav class="nav">
       <a href="/">Command Center</a>
       <a href="/pipeline">Pipeline Flow</a>
+      <a href="/operations">Operations</a>
+      <a href="/scoreboard">Scoreboard</a>
+      <a href="/strategy-lab">Strategy Lab</a>
+      <a href="/risk-timeline">Risk Timeline</a>
       <a class="active" href="/rules">Rules Control</a>
       <a href="/legacy">Legacy Dashboard</a>
       <a href="/api/miro">API State</a>
@@ -3335,6 +3432,10 @@ body{background:linear-gradient(180deg,rgba(66,198,255,.08),transparent 260px),r
     <nav class="nav">
       <a href="/">Command Center</a>
       <a class="active" href="/pipeline">Pipeline Flow</a>
+      <a href="/operations">Operations</a>
+      <a href="/scoreboard">Scoreboard</a>
+      <a href="/strategy-lab">Strategy Lab</a>
+      <a href="/risk-timeline">Risk Timeline</a>
       <a href="/rules">Rules Control</a>
       <a href="/legacy">Legacy Dashboard</a>
       <a href="/api/miro">API State</a>
@@ -3435,6 +3536,42 @@ refreshAll();setInterval(refreshAll,3000);
 </body>
 </html>"""
 
+OPS_PAGE_HTML = r"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>MIRO Operations</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0d10;--panel:#11161b;--panel2:#151b22;--line:#27313b;--text:#e9edf1;--muted:#8b98a6;--green:#2fd17c;--red:#f05252;--amber:#e6ad32;--cyan:#42c6ff;--mono:'IBM Plex Mono',monospace;--font:'IBM Plex Sans',sans-serif}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,rgba(66,198,255,.08),transparent 340px),var(--bg);color:var(--text);font-family:var(--font);font-size:13px}.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:18px 14px;background:#080a0c}.brand{font-weight:700;letter-spacing:.08em;margin-bottom:20px}.nav{display:grid;gap:6px}.nav a{color:#b5c0cc;text-decoration:none;padding:9px 10px;border-radius:6px}.nav a.active,.nav a:hover{background:var(--panel2);color:var(--text)}.main{padding:18px}.title{font-size:28px;font-weight:700}.sub{color:var(--muted);margin:4px 0 16px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:13px}.card h3{margin:0 0 5px;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.desc{color:var(--muted);font-size:12px;line-height:1.5;min-height:38px}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.btn{background:var(--panel2);border:1px solid #344250;color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer}.btn.good{color:#d7ffe7;border-color:rgba(47,209,124,.45)}.btn.danger{color:#ffd4d4;border-color:rgba(240,82,82,.45)}.log{white-space:pre-wrap;font-family:var(--mono);font-size:11px;background:#0d1115;border:1px solid var(--line);border-radius:7px;padding:10px;max-height:260px;overflow:auto;margin-top:12px}.audit{margin-top:12px}.row{display:grid;grid-template-columns:150px 140px 1fr;gap:8px;padding:8px;border-bottom:1px solid rgba(39,49,59,.7);font-family:var(--mono);font-size:11px}.ok{color:var(--green)}.warn{color:var(--amber)}@media(max-width:1100px){.shell{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
+</style></head><body><div class="shell"><aside class="side"><div class="brand">MIRO CONTROL</div><nav class="nav"><a href="/">Command Center</a><a class="active" href="/operations">Operations</a><a href="/scoreboard">Scoreboard</a><a href="/strategy-lab">Strategy Lab</a><a href="/risk-timeline">Risk Timeline</a><a href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a></nav></aside><main class="main"><div class="title">Operations Console</div><div class="sub">Grouped controls with audit trail, config snapshots, and safer state maintenance.</div>
+<div class="grid">
+<div class="card"><h3>Agent Runtime</h3><div class="desc">Control supervised launch.py process.</div><div class="actions"><button class="btn good" onclick="agents('start')" title="Start supervised agents">Start</button><button class="btn" onclick="agents('restart')" title="Restart all supervised agents">Restart</button><button class="btn danger" onclick="agents('stop')" title="Stop supervised agents">Stop</button></div></div>
+<div class="card"><h3>Monitoring</h3><div class="desc">Health checks and watchdog auto-recovery.</div><div class="actions"><button class="btn" onclick="health()" title="Run health scan">Health</button><button class="btn good" onclick="watchdog('start')" title="Start watchdog">Start Watchdog</button><button class="btn" onclick="watchdog('check')" title="Run one watchdog check">Check</button><button class="btn danger" onclick="watchdog('stop')" title="Stop watchdog">Stop</button></div></div>
+<div class="card"><h3>Communication</h3><div class="desc">Verify Telegram and incident alerts.</div><div class="actions"><button class="btn good" onclick="post('/api/telegram-test')" title="Send Telegram test">Telegram</button><button class="btn good" onclick="post('/api/incident-test')" title="Send incident alert test">Incident</button></div></div>
+<div class="card"><h3>Safety Locks</h3><div class="desc">Live mode stays locked unless explicitly unlocked.</div><div class="actions"><button class="btn danger" onclick="live('lock')" title="Lock live mode">Lock Live</button><button class="btn danger" onclick="live('unlock')" title="Unlock live mode for 30 minutes">Unlock 30m</button></div></div>
+<div class="card"><h3>Config Backup</h3><div class="desc">Snapshot or restore safety/rule configs.</div><div class="actions"><button class="btn" onclick="snapshot()" title="Backup current configs">Snapshot</button><button class="btn" onclick="loadSnapshots()" title="List snapshots">List</button></div></div>
+<div class="card"><h3>State Maintenance</h3><div class="desc">Reset local paper/runtime state with backups.</div><div class="actions"><button class="btn danger" onclick="reset(false)" title="Reset paper state">Reset Paper</button><button class="btn danger" onclick="reset(true)" title="Clear runtime state">Clear Runtime</button></div></div>
+</div><div class="log" id="out">Ready.</div><div class="audit" id="audit"></div></main></div><script>
+const out=t=>document.getElementById('out').textContent=typeof t==='string'?t:JSON.stringify(t,null,2);
+async function post(url,body={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();out(d);loadAudit();return d}
+async function agents(action){if(action!=='start'&&!confirm(action+' agents?'))return post('/api/agents/control',{action})}
+async function watchdog(action){return post('/api/watchdog/control',{action})}
+async function health(){const d=await (await fetch('/api/system-health')).json();out(d)}
+async function live(action){if(action==='unlock'&&!confirm('Unlock live mode for 30 minutes?'))return;return post('/api/live-lock',{action,minutes:30,reason:'Operations page '+action})}
+async function reset(include_runtime){if(!confirm(include_runtime?'Clear runtime and reset paper?':'Reset paper state?'))return post('/api/reset-state',{paper_balance:10000,include_runtime})}
+async function snapshot(){return post('/api/ops/config-snapshots',{label:'operations_page'})}
+async function loadSnapshots(){const d=await (await fetch('/api/ops/config-snapshots')).json();out(d)}
+async function loadAudit(){const d=await (await fetch('/api/ops/audit?limit=20')).json();document.getElementById('audit').innerHTML=(d.items||[]).map(x=>`<div class="row"><span>${(x.time||'').slice(0,19)}</span><span class="${x.ok?'ok':'warn'}">${x.action}</span><span>${x.result_summary||x.detail||''}</span></div>`).join('')}
+loadAudit();
+</script></body></html>"""
+
+SCOREBOARD_HTML = r"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MIRO Scoreboard</title><style>body{margin:0;background:#0b0d10;color:#e9edf1;font-family:Arial,sans-serif;padding:18px}.nav a{color:#b5c0cc;margin-right:14px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.card{background:#11161b;border:1px solid #27313b;border-radius:10px;padding:16px}.label{color:#8b98a6;font-size:11px;text-transform:uppercase}.value{font-size:28px;font-weight:700;margin-top:6px}.green{color:#2fd17c}.red{color:#f05252}.amber{color:#e6ad32}@media(max-width:900px){.grid{grid-template-columns:1fr}}</style></head><body><div class="nav"><a href="/">Command</a><a href="/operations">Operations</a><a href="/strategy-lab">Strategy Lab</a><a href="/risk-timeline">Risk Timeline</a></div><h1>Paper Trading Scoreboard</h1><div class="grid" id="grid"></div><script>
+const fmt=v=>Number(v||0).toFixed(2);async function load(){const d=await(await fetch('/api/scoreboard')).json();const items=[['Balance','$'+fmt(d.balance)],['Realized P&L','$'+fmt(d.realized_pnl),d.realized_pnl>=0?'green':'red'],['Win Rate',fmt(d.win_rate)+'%'],['Profit Factor',fmt(d.profit_factor)],['Drawdown',fmt(d.drawdown_pct)+'%','amber'],['Trades',d.total_trades],['Average R',fmt(d.avg_r)],['Readiness',d.readiness_mode,d.ready?'green':'red'],['Blockers',d.blocker_count],['Warnings',d.warning_count],['Best Trade','$'+fmt(d.best_trade),'green'],['Worst Trade','$'+fmt(d.worst_trade),'red']];document.getElementById('grid').innerHTML=items.map(i=>`<div class="card"><div class="label">${i[0]}</div><div class="value ${i[2]||''}">${i[1]}</div></div>`).join('')}load();setInterval(load,5000)</script></body></html>"""
+
+STRATEGY_LAB_HTML = r"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MIRO Strategy Lab</title><style>body{margin:0;background:#0b0d10;color:#e9edf1;font-family:Arial,sans-serif;padding:18px}.nav a{color:#b5c0cc;margin-right:14px}.panel{background:#11161b;border:1px solid #27313b;border-radius:10px;padding:14px;margin:12px 0}.row{display:grid;grid-template-columns:190px 130px 1fr;gap:10px;border-bottom:1px solid #27313b;padding:9px;font-family:monospace;font-size:12px}.pill{border:1px solid #344250;border-radius:999px;padding:3px 8px}.green{color:#2fd17c}.red{color:#f05252}.amber{color:#e6ad32}</style></head><body><div class="nav"><a href="/">Command</a><a href="/operations">Operations</a><a href="/scoreboard">Scoreboard</a><a href="/risk-timeline">Risk Timeline</a></div><h1>Strategy Lab</h1><div id="summary" class="panel">Loading...</div><div id="rows" class="panel"></div><script>
+async function load(){const d=await(await fetch('/api/strategy-lab')).json();document.getElementById('summary').innerHTML=`Promotion: <b>${(d.promotion.status||'candidate').toUpperCase()}</b> / ${d.promotion.approved_for||'research_only'}<br>Lifecycle: <b>${(d.lifecycle.stage||'no report').toUpperCase()}</b><br>Experiments: ${d.experiments.total_experiments||0}`;const recent=d.recent||[];document.getElementById('rows').innerHTML=recent.length?recent.reverse().map(e=>{const r=e.results||{};return `<div class="row"><span>${e.id||'experiment'}</span><span class="pill">${e.experiment_type||'test'}</span><span>WR ${r.best_win_rate||r.win_rate||'--'} | PF ${r.best_profit_factor||r.profit_factor||'--'} | Applied ${r.applied?'YES':'NO'}</span></div>`}).join(''):'No experiments found.'}load()</script></body></html>"""
+
+RISK_TIMELINE_HTML = r"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MIRO Risk Timeline</title><style>body{margin:0;background:#0b0d10;color:#e9edf1;font-family:Arial,sans-serif;padding:18px}.nav a{color:#b5c0cc;margin-right:14px}.event{background:#11161b;border:1px solid #27313b;border-left:4px solid #42c6ff;border-radius:8px;padding:12px;margin:9px 0}.event.warn{border-left-color:#e6ad32}.event.red{border-left-color:#f05252}.meta{color:#8b98a6;font-family:monospace;font-size:12px}</style></head><body><div class="nav"><a href="/">Command</a><a href="/operations">Operations</a><a href="/scoreboard">Scoreboard</a><a href="/strategy-lab">Strategy Lab</a></div><h1>Risk Event Timeline</h1><div id="items">Loading...</div><script>
+async function load(){const d=await(await fetch('/api/ops/timeline?limit=80')).json();document.getElementById('items').innerHTML=(d.items||[]).map(e=>`<div class="event ${e.severity==='warn'?'warn':''}"><div class="meta">${(e.time||'').slice(0,19)} | ${e.source} | ${e.type}</div><div>${e.detail||''}</div></div>`).join('')||'No events yet.'}load();setInterval(load,5000)</script></body></html>"""
+
 
 @app.route("/")
 @app.route("/miro")
@@ -3445,6 +3582,26 @@ def dashboard():
 @app.route("/pipeline")
 def pipeline_dashboard():
     return PIPELINE_DASHBOARD_HTML
+
+
+@app.route("/operations")
+def operations_dashboard():
+    return OPS_PAGE_HTML
+
+
+@app.route("/scoreboard")
+def scoreboard_dashboard():
+    return SCOREBOARD_HTML
+
+
+@app.route("/strategy-lab")
+def strategy_lab_dashboard():
+    return STRATEGY_LAB_HTML
+
+
+@app.route("/risk-timeline")
+def risk_timeline_dashboard():
+    return RISK_TIMELINE_HTML
 
 
 @app.route("/rules")

@@ -2523,12 +2523,18 @@ button,input,select{font:inherit}
 .mini-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
 .mini{background:#0d1115;border:1px solid rgba(39,49,59,.8);border-radius:7px;padding:9px}
 .mini b{display:block;font-size:17px;margin-top:4px}
+.ops-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px}
+.ops-group{background:#0d1115;border:1px solid rgba(39,49,59,.8);border-radius:8px;padding:10px}
+.ops-title{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--soft);font-weight:700;margin-bottom:3px}
+.ops-desc{font-size:10px;color:var(--muted);line-height:1.45;margin-bottom:8px}
+.ops-actions{display:flex;gap:7px;flex-wrap:wrap}
+.ops-actions .btn{min-width:auto;padding:7px 9px;font-size:12px}
 .note{color:var(--muted);font-size:11px;line-height:1.5}
 .scroll-table{max-height:230px;overflow:auto;border:1px solid rgba(39,49,59,.65);border-radius:7px}
 .scroll-table .table th{position:sticky;top:0;background:#11161b;z-index:1}
 .footer{margin-top:12px;color:var(--muted);font-size:11px;font-family:var(--mono);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
-@media(max-width:1100px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto}.side-foot{position:static;margin-top:20px}.status-strip{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.top{flex-direction:column}.actions{justify-content:flex-start}.mini-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:640px){.main{padding:12px}.status-strip,.split,.mini-grid{grid-template-columns:1fr}.title{font-size:22px}.value{font-size:18px}}
+@media(max-width:1100px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto}.side-foot{position:static;margin-top:20px}.status-strip{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.top{flex-direction:column}.actions{justify-content:flex-start}.mini-grid{grid-template-columns:repeat(2,1fr)}.ops-grid{grid-template-columns:1fr}}
+@media(max-width:640px){.main{padding:12px}.status-strip,.split,.mini-grid,.ops-grid{grid-template-columns:1fr}.title{font-size:22px}.value{font-size:18px}}
 </style>
 </head>
 <body>
@@ -2662,23 +2668,59 @@ button,input,select{font:inherit}
         <section class="section">
           <div class="section-head"><div class="section-title">System Operations</div><span class="pill" id="ops-pill">READY</span></div>
           <div class="section-body">
-            <div class="actions" style="justify-content:flex-start;margin-bottom:10px">
-              <button class="btn" onclick="runSystemHealth()">Run Health</button>
-              <button class="btn good" onclick="testTelegram()">Test Telegram</button>
-              <button class="btn good" onclick="controlAgents('start')">Start Agents</button>
-              <button class="btn" onclick="controlAgents('restart')">Restart Agents</button>
-              <button class="btn danger" onclick="controlAgents('stop')">Stop Agents</button>
-              <button class="btn good" onclick="controlWatchdog('start')">Start Watchdog</button>
-              <button class="btn" onclick="controlWatchdog('check')">Watchdog Check</button>
-              <button class="btn danger" onclick="controlWatchdog('stop')">Stop Watchdog</button>
-              <button class="btn" onclick="runDailyRoutine()">Daily Routine</button>
-              <button class="btn" onclick="loadLog('agents')">Agent Log</button>
-              <button class="btn" onclick="loadLog('optimizer')">Optimizer Log</button>
-              <button class="btn good" onclick="testIncident()">Incident Alert</button>
-              <button class="btn danger" onclick="setLiveLock('lock')">Lock Live</button>
-              <button class="btn danger" onclick="setLiveLock('unlock')">Unlock Live 30m</button>
-              <button class="btn danger" onclick="resetPaper(false)">Reset Paper</button>
-              <button class="btn danger" onclick="resetPaper(true)">Clear Runtime</button>
+            <div class="ops-grid">
+              <div class="ops-group">
+                <div class="ops-title">Agent Runtime</div>
+                <div class="ops-desc">Start, restart, or stop the supervised `launch.py` process.</div>
+                <div class="ops-actions">
+                  <button class="btn good" onclick="controlAgents('start')">Start</button>
+                  <button class="btn" onclick="controlAgents('restart')">Restart</button>
+                  <button class="btn danger" onclick="controlAgents('stop')">Stop</button>
+                </div>
+              </div>
+              <div class="ops-group">
+                <div class="ops-title">Monitoring</div>
+                <div class="ops-desc">Run health checks and control watchdog auto-recovery.</div>
+                <div class="ops-actions">
+                  <button class="btn" onclick="runSystemHealth()">Health</button>
+                  <button class="btn good" onclick="controlWatchdog('start')">Start Watchdog</button>
+                  <button class="btn" onclick="controlWatchdog('check')">Check</button>
+                  <button class="btn danger" onclick="controlWatchdog('stop')">Stop</button>
+                </div>
+              </div>
+              <div class="ops-group">
+                <div class="ops-title">Communication</div>
+                <div class="ops-desc">Verify Telegram delivery and incident alert routing.</div>
+                <div class="ops-actions">
+                  <button class="btn good" onclick="testTelegram()">Test Telegram</button>
+                  <button class="btn good" onclick="testIncident()">Incident Alert</button>
+                </div>
+              </div>
+              <div class="ops-group">
+                <div class="ops-title">Safety Locks</div>
+                <div class="ops-desc">Keep live mode locked unless a short manual unlock is intentional.</div>
+                <div class="ops-actions">
+                  <button class="btn danger" onclick="setLiveLock('lock')">Lock Live</button>
+                  <button class="btn danger" onclick="setLiveLock('unlock')">Unlock 30m</button>
+                </div>
+              </div>
+              <div class="ops-group">
+                <div class="ops-title">Logs & Routine</div>
+                <div class="ops-desc">Inspect recent logs and run the lightweight daily maintenance routine.</div>
+                <div class="ops-actions">
+                  <button class="btn" onclick="loadLog('agents')">Agent Log</button>
+                  <button class="btn" onclick="loadLog('optimizer')">Optimizer Log</button>
+                  <button class="btn" onclick="runDailyRoutine()">Daily Routine</button>
+                </div>
+              </div>
+              <div class="ops-group">
+                <div class="ops-title">State Maintenance</div>
+                <div class="ops-desc">Back up and reset local paper/runtime state. Restart agents after clearing runtime.</div>
+                <div class="ops-actions">
+                  <button class="btn danger" onclick="resetPaper(false)">Reset Paper</button>
+                  <button class="btn danger" onclick="resetPaper(true)">Clear Runtime</button>
+                </div>
+              </div>
             </div>
             <div class="note" style="margin-bottom:8px">Agent controls manage supervised background `launch.py`. Reset Paper backs up local state and resets the paper balance to $10,000. Clear Runtime also removes stale agent/signal JSON files; restart agents after using it.</div>
             <div class="log" id="ops-output">No operation run yet.</div>

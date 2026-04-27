@@ -298,14 +298,29 @@ def _setup_wizard_payload():
     grouped = {}
     for issue in issues:
         grouped.setdefault(issue["category"], []).append(issue)
+    ok_count = sum(1 for c in checks if c.get("status") == "ok")
+    warn_count = sum(1 for c in checks if c.get("status") == "warn")
+    blocker_count = sum(1 for c in checks if c.get("status") == "blocker")
+    total_count = len(checks)
+    auto_fixable = [issue for issue in issues if issue.get("auto")]
+    manual_required = [issue for issue in issues if not issue.get("auto")]
     return {
         "status": health.get("status"),
         "score": health.get("score"),
-        "blocker_count": health.get("blocker_count", 0),
-        "warning_count": health.get("warning_count", 0),
+        "blocker_count": blocker_count,
+        "warning_count": warn_count,
+        "ok_count": ok_count,
+        "total_count": total_count,
+        "fixed_count": ok_count,
+        "pending_count": len(issues),
+        "auto_fixable_count": len(auto_fixable),
+        "manual_required_count": len(manual_required),
+        "completion_pct": round((ok_count / total_count * 100), 1) if total_count else 100.0,
         "steps": checks,
         "issues": issues,
         "groups": grouped,
+        "auto_fixable": auto_fixable,
+        "manual_required": manual_required,
         "next_actions": health.get("next_actions", []),
         "commands": [
             ".\\setup.ps1",
@@ -1433,6 +1448,21 @@ def api_setup_wizard_fix():
         result = send_telegram_test()
     elif action == "lock_live":
         result = lock_live_mode("Setup wizard safety lock")
+    elif action == "auto_fix_all":
+        results = []
+        before = _setup_wizard_payload()
+        for item in before.get("auto_fixable", []):
+            fix_action = item.get("action")
+            if fix_action == "repair_paths":
+                fix_result = _repair_setup_paths()
+            elif fix_action == "start_agents":
+                fix_result = start_agents()
+            elif fix_action == "start_watchdog":
+                fix_result = start_watchdog()
+            else:
+                fix_result = {"ok": False, "skipped": True, "reason": "No safe handler for {}".format(fix_action)}
+            results.append({"issue": item.get("name"), "action": fix_action, "result": fix_result})
+        result = {"ok": True, "results": results}
     elif action == "scan":
         result = _setup_wizard_payload()
     elif action == "open_env":
@@ -4247,11 +4277,13 @@ def _risk_timeline_page():
 
 
 def _setup_page():
-    body = """<div class="grid4" id="setupSummary"></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button></div><div id="fixOut" class="log">Ready.</div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
+    body = """<div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button></div><div id="fixOut" class="log">Ready.</div></div><div class="grid"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
     script = """
-async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}
+let lastWizard=null;
+async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;document.getElementById('fixOut').textContent='Running '+action+' and rescanning...';const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}
 function issueCard(x){return `<div class="card" style="margin-bottom:10px"><h3>${esc(x.title)}</h3><div class="row"><span class="${x.status==='blocker'?'red':'amber'}">${esc(x.status)}</span><span>${esc(x.name)}</span><span>${esc(x.detail)}</span></div><div class="desc"><b>Impact:</b> ${esc(x.impact||x.why)}<br><b>How to fix:</b> ${esc(x.how)}<br><b>Command:</b> <span class="sub">${esc(x.command)}</span></div><div class="actions">${x.auto?`<button class="btn good" onclick="fix('${esc(x.action)}')">Fix safely</button>`:`<button class="btn" onclick="fix('${esc(x.action)}')">Manual steps</button>`}<button class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(x.command)}')">Copy command</button></div></div>`}
-function render(d){const healthClass=d.status==='ok'?'green':d.status==='warn'?'amber':'red';document.getElementById('setupSummary').innerHTML=[['Health',String(d.status||'--').toUpperCase(),healthClass],['Score',d.score??'--',healthClass],['Blockers',d.blocker_count||0,(d.blocker_count||0)?'red':'green'],['Warnings',d.warning_count||0,(d.warning_count||0)?'amber':'green']].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${esc(x[1])}</div></div>`).join('');document.getElementById('commands').innerHTML=(d.commands||[]).map(c=>`<div class="row"><span>PowerShell</span><span>Command</span><span>${esc(c)}</span></div>`).join('');const groups=d.groups||{};document.getElementById('issues').innerHTML=Object.keys(groups).length?Object.entries(groups).map(([g,items])=>`<div class="panel"><h3>${esc(g)}</h3>${items.map(issueCard).join('')}</div>`).join(''):'<div class="green">No setup issues detected. Continue paper/demo validation.</div>';document.getElementById('steps').innerHTML=(d.steps||[]).map(s=>`<div class="row"><span class="${s.status==='ok'?'green':s.status==='warn'?'amber':'red'}">${esc(s.status)}</span><span>${esc(s.name)}</span><span>${esc(s.detail)} - ${esc(s.impact)}</span></div>`).join('')}
+function miniIssue(x){return `<div class="row"><span class="${x.status==='blocker'?'red':'amber'}">${esc(x.status)}</span><span>${esc(x.name)}</span><span>${esc(x.how||x.detail)}</span></div>`}
+function render(d){lastWizard=d;const healthClass=d.status==='ok'?'green':d.status==='warn'?'amber':'red';const pct=Number(d.completion_pct||0);document.getElementById('setupSummary').innerHTML=[['Health',String(d.status||'--').toUpperCase(),healthClass],['Score',d.score??'--',healthClass],['Fixed',`${d.fixed_count||0}/${d.total_count||0}`,'green'],['Pending',d.pending_count||0,(d.pending_count||0)?'amber':'green']].map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${esc(x[1])}</div></div>`).join('');document.getElementById('setupProgress').style.width=Math.max(3,Math.min(100,pct))+'%';document.getElementById('setupProgressText').innerHTML=`${pct}% complete. Auto-fixable: <b>${d.auto_fixable_count||0}</b>. Manual required: <b>${d.manual_required_count||0}</b>. Last scan updates this full checklist live.`;document.getElementById('commands').innerHTML=(d.commands||[]).map(c=>`<div class="row"><span>PowerShell</span><span>Command</span><span>${esc(c)}</span></div>`).join('');document.getElementById('autoFixable').innerHTML=(d.auto_fixable||[]).map(miniIssue).join('')||'<div class="green">No safe auto-fixes pending.</div>';document.getElementById('manualRequired').innerHTML=(d.manual_required||[]).map(miniIssue).join('')||'<div class="green">No manual setup items pending.</div>';document.getElementById('nextActions').innerHTML=(d.next_actions||[]).map(a=>`<div class="row"><span>Next</span><span>Action</span><span>${esc(a)}</span></div>`).join('');const groups=d.groups||{};document.getElementById('issues').innerHTML=Object.keys(groups).length?Object.entries(groups).map(([g,items])=>`<div class="panel"><h3>${esc(g)}</h3>${items.map(issueCard).join('')}</div>`).join(''):'<div class="green">No setup issues detected. Continue paper/demo validation.</div>';document.getElementById('steps').innerHTML=(d.steps||[]).map(s=>`<div class="row"><span class="${s.status==='ok'?'green':s.status==='warn'?'amber':'red'}">${s.status==='ok'?'FIXED':esc(s.status).toUpperCase()}</span><span>${esc(s.name)}</span><span>${esc(s.detail)} - ${esc(s.impact)}</span></div>`).join('')}
 async function load(){render(await(await fetch('/api/setup-wizard')).json())}
 load();setInterval(load,10000);
 """

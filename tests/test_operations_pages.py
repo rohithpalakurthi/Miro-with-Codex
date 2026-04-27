@@ -68,6 +68,8 @@ class OperationsPagesTests(unittest.TestCase):
         payload = response.get_json()
         self.assertIn("wizard", payload)
         self.assertIn("issues", payload["wizard"])
+        self.assertIn("completion_pct", payload["wizard"])
+        self.assertIn("auto_fixable", payload["wizard"])
 
     def test_scoreboard_records_metric_history(self):
         from agents.master_trader import miro_dashboard_server as server

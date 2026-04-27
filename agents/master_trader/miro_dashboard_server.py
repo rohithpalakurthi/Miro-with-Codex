@@ -99,6 +99,7 @@ FILES = {
 }
 
 PAUSE_FILE     = "agents/master_trader/miro_pause.json"
+KILL_SWITCH_FILE = "runtime/kill_switch.json"
 CB_CONFIG_FILE      = "agents/master_trader/circuit_breaker_config.json"
 TRADING_CONFIG_FILE = "agents/master_trader/trading_config.json"
 
@@ -345,6 +346,61 @@ def _repair_setup_paths():
         env_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
         env_created = True
     return {"ok": True, "created": created, "env_created": env_created}
+
+
+def _write_pause(reason="Dashboard pause"):
+    Path(PAUSE_FILE).parent.mkdir(parents=True, exist_ok=True)
+    with open(PAUSE_FILE, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "paused": True,
+                "reason": reason,
+                "time": datetime.now(timezone.utc).isoformat(),
+            },
+            f,
+            indent=2,
+        )
+
+
+def _kill_switch(reason="Operator kill switch"):
+    """Emergency stop for autonomous execution while leaving the dashboard online."""
+    _write_pause(reason)
+    live_lock = lock_live_mode(reason)
+    agents = stop_agents()
+    watchdog = stop_watchdog()
+    payload = {
+        "ok": True,
+        "status": "kill_switch_active",
+        "reason": reason,
+        "time": datetime.now(timezone.utc).isoformat(),
+        "pause_file": PAUSE_FILE,
+        "kill_switch_file": KILL_SWITCH_FILE,
+        "live_lock": live_lock,
+        "agents": agents,
+        "watchdog": watchdog,
+    }
+    kill_path = ROOT_PATH / KILL_SWITCH_FILE
+    kill_path.parent.mkdir(parents=True, exist_ok=True)
+    kill_path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+    audit("kill_switch", payload, detail=reason)
+    return payload
+
+
+def _kill_switch_status():
+    state = {}
+    kill_path = ROOT_PATH / KILL_SWITCH_FILE
+    if kill_path.exists():
+        try:
+            state = json.loads(kill_path.read_text(encoding="utf-8"))
+        except Exception:
+            state = {"status": "unreadable", "path": KILL_SWITCH_FILE}
+    return {
+        "active": os.path.exists(PAUSE_FILE),
+        "state": state,
+        "agents": agents_process_status(),
+        "watchdog": watchdog_status(),
+        "live_lock": live_mode_lock_status(),
+    }
 
 
 def _invalidate_cache(*keys):
@@ -789,9 +845,7 @@ def api_live_safety_post():
 
 @app.route("/api/pause", methods=["POST"])
 def api_pause():
-    os.makedirs("agents/master_trader", exist_ok=True)
-    with open(PAUSE_FILE, "w") as f:
-        json.dump({"paused": True, "time": str(datetime.now())}, f)
+    _write_pause("Dashboard pause")
     return jsonify({"status": "paused"})
 
 @app.route("/api/resume", methods=["POST"])
@@ -1096,6 +1150,15 @@ def api_live_lock():
         audit("live_lock", result)
         return jsonify(result)
     return jsonify(live_mode_lock_status())
+
+
+@app.route("/api/kill-switch", methods=["GET", "POST"])
+def api_kill_switch():
+    if request.method == "GET":
+        return jsonify(_kill_switch_status())
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason", "Operator kill switch"))
+    return jsonify(_kill_switch(reason))
 
 
 @app.route("/api/ops/audit", methods=["GET"])
@@ -1448,6 +1511,8 @@ def api_setup_wizard_fix():
         result = send_telegram_test()
     elif action == "lock_live":
         result = lock_live_mode("Setup wizard safety lock")
+    elif action == "kill_switch":
+        result = _kill_switch("Setup wizard kill switch")
     elif action == "auto_fix_all":
         results = []
         before = _setup_wizard_payload()
@@ -4234,6 +4299,7 @@ def _operations_page():
 <div class="card"><h3>Monitoring</h3><div class="desc">Health checks and watchdog auto-recovery.</div><div class="actions"><button class="btn" onclick="health()">Health</button><button class="btn good" onclick="watchdog('start')">Start Watchdog</button><button class="btn" onclick="watchdog('check')">Check</button><button class="btn danger" onclick="watchdog('stop')">Stop</button></div></div>
 <div class="card"><h3>Communication</h3><div class="desc">Verify Telegram and incident alerts.</div><div class="actions"><button class="btn good" onclick="post('/api/telegram-test')">Telegram</button><button class="btn good" onclick="post('/api/incident-test')">Incident</button></div></div>
 <div class="card"><h3>Safety Locks</h3><div class="desc">Live mode stays locked unless intentionally unlocked.</div><div class="actions"><button class="btn danger" onclick="live('lock')">Lock Live</button><button class="btn danger" onclick="live('unlock')">Unlock 30m</button></div></div>
+<div class="card"><h3>Kill Switch</h3><div class="desc">Emergency stop: pause MIRO, lock live mode, stop agents, and stop the watchdog. Dashboard stays online for recovery.</div><div class="actions"><button class="btn danger" onclick="killSwitch()">KILL SWITCH</button></div></div>
 <div class="card"><h3>Config Backup</h3><div class="desc">Snapshot or restore rules/safety configs.</div><div class="actions"><button class="btn" onclick="snapshot()">Snapshot</button><button class="btn" onclick="loadSnapshots()">List/Restore</button></div></div>
 <div class="card"><h3>State Maintenance</h3><div class="desc">Back up and reset local paper/runtime state.</div><div class="actions"><button class="btn danger" onclick="reset(false)">Reset Paper</button><button class="btn danger" onclick="reset(true)">Clear Runtime</button></div></div>
 </div><div class="log" id="out">Ready.</div><div class="panel" id="opsdb"></div><div class="panel" id="snapshots"></div><div class="panel" id="audit"></div>"""
@@ -4244,6 +4310,7 @@ async function agents(action){if(action!=='start'&&!confirm(action+' agents?'))r
 async function watchdog(action){return post('/api/watchdog/control',{action})}
 async function health(){out(await(await fetch('/api/system-health')).json())}
 async function live(action){if(action==='unlock'&&!confirm('Unlock live mode for 30 minutes?'))return;return post('/api/live-lock',{action,minutes:30,reason:'Operations page '+action})}
+async function killSwitch(){if(!confirm('Emergency kill switch? This pauses trading, locks live mode, and stops agents/watchdog. Dashboard remains online.'))return;return post('/api/kill-switch',{reason:'Operations kill switch'})}
 async function reset(include_runtime){if(!confirm(include_runtime?'Clear runtime and reset paper?':'Reset paper state?'))return post('/api/reset-state',{paper_balance:10000,include_runtime})}
 async function snapshot(){await post('/api/ops/config-snapshots',{label:'operations_page'});loadSnapshots()}
 async function restoreSnapshot(name){if(!confirm('Restore config snapshot '+name+'?'))return;await post('/api/ops/config-snapshots',{action:'restore',name});loadSnapshots()}
@@ -4277,10 +4344,10 @@ def _risk_timeline_page():
 
 
 def _setup_page():
-    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button></div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
+    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
     script = """
 let lastWizard=null;
-async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;document.getElementById('fixOut').textContent='Running '+action+' and rescanning...';const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}
+async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;if(action==='kill_switch'&&!confirm('KILL SWITCH: pause MIRO, lock live mode, stop agents, and stop watchdog? Dashboard will stay online.'))return;document.getElementById('fixOut').textContent='Running '+action+' and rescanning...';const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}
 function issueCard(x){return `<div class="card" style="margin-bottom:10px"><h3>${esc(x.title)}</h3><div class="row"><span class="${x.status==='blocker'?'red':'amber'}">${esc(x.status)}</span><span>${esc(x.name)}</span><span>${esc(x.detail)}</span></div><div class="desc"><b>Impact:</b> ${esc(x.impact||x.why)}<br><b>How to fix:</b> ${esc(x.how)}<br><b>Command:</b> <span class="sub">${esc(x.command)}</span></div><div class="actions">${x.auto?`<button class="btn good" onclick="fix('${esc(x.action)}')">Fix safely</button>`:`<button class="btn" onclick="fix('${esc(x.action)}')">Manual steps</button>`}<button class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(x.command)}')">Copy command</button></div></div>`}
 function compactIssue(x){return `<div class="setup-item"><div class="setup-item-top"><span class="setup-pill ${esc(x.status)}">${esc(x.status).toUpperCase()}</span><span class="setup-name" title="${esc(x.name)}">${esc(x.name)}</span></div><div class="setup-detail">${esc(x.title||x.how||x.detail)}</div></div>`}
 function compactAction(a){const bits=String(a||'').split(':');return `<div class="setup-item"><div class="setup-item-top"><span class="setup-pill warn">NEXT</span><span class="setup-name">${esc(bits[0]||'Action')}</span></div><div class="setup-detail">${esc(bits.slice(1).join(':').trim()||a)}</div></div>`}

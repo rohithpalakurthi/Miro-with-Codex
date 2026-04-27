@@ -54,10 +54,21 @@ class OperationsPagesTests(unittest.TestCase):
             ("/api/recovery/status", "recommended_actions"),
             ("/api/simulation-lab", "modes"),
             ("/api/setup-wizard", "steps"),
+            ("/api/kill-switch", "active"),
         ]:
             response = client.get(path)
             self.assertEqual(response.status_code, 200)
             self.assertIn(key, response.get_json())
+
+    def test_kill_switch_controls_render(self):
+        from agents.master_trader import miro_dashboard_server as server
+
+        client = server.app.test_client()
+        self.assertIn("KILL SWITCH", client.get("/setup").get_data(as_text=True))
+        self.assertIn("Kill Switch", client.get("/operations").get_data(as_text=True))
+        response = client.get("/api/kill-switch")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("active", response.get_json())
 
     def test_setup_wizard_fix_scan(self):
         from agents.master_trader import miro_dashboard_server as server

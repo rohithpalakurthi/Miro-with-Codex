@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from tools.ops_db import record_audit_event
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtime"
@@ -65,6 +67,10 @@ def audit(action: str, result: Any, *, actor: str = "dashboard", detail: str = "
     }
     entries.append(entry)
     save_json(AUDIT_FILE, entries[-500:])
+    try:
+        record_audit_event(entry, result)
+    except Exception:
+        pass
     return entry
 
 

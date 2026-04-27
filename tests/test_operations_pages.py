@@ -39,11 +39,24 @@ class OperationsPagesTests(unittest.TestCase):
             ("/api/ops/audit", "items"),
             ("/api/ops/timeline", "items"),
             ("/api/ops/config-snapshots", "items"),
+            ("/api/ops/events", "database"),
+            ("/api/ops/metrics/history", "items"),
             ("/api/setup-wizard", "steps"),
         ]:
             response = client.get(path)
             self.assertEqual(response.status_code, 200)
             self.assertIn(key, response.get_json())
+
+    def test_scoreboard_records_metric_history(self):
+        from agents.master_trader import miro_dashboard_server as server
+
+        client = server.app.test_client()
+        self.assertEqual(client.get("/api/scoreboard").status_code, 200)
+        response = client.get("/api/ops/metrics/history?metric=balance&limit=5")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIn("items", payload)
+        self.assertGreaterEqual(len(payload["items"]), 1)
 
 
 if __name__ == "__main__":

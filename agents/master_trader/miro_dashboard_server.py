@@ -47,6 +47,14 @@ from tools.operations_state import (
     restore_config_snapshot,
     risk_timeline,
 )
+from tools.ops_db import (
+    database_summary,
+    metric_history,
+    recent_audit_events,
+    recent_promotion_events,
+    record_metric_snapshot,
+    record_promotion_event,
+)
 from tools.watchdog import check_once as watchdog_check_once
 
 FILES = {
@@ -450,19 +458,23 @@ def api_promotion_post():
     if action == "refresh":
         evaluate_promotion(strategy)
         _invalidate_cache("promotion_status", "research_summary")
+        promotion = resolve_promotion(strategy)
+        record_promotion_event(strategy, "refresh", promotion)
         return jsonify({
             "status": "refreshed",
-            "promotion": resolve_promotion(strategy),
+            "promotion": promotion,
             "research_summary": summarize_experiments(strategy),
         })
 
     if action == "clear_override":
         cleared = clear_manual_override(strategy)
         _invalidate_cache("promotion_status", "research_summary")
+        promotion = resolve_promotion(strategy)
+        record_promotion_event(strategy, "clear_override", promotion)
         return jsonify({
             "status": "override_cleared",
             "result": cleared,
-            "promotion": resolve_promotion(strategy),
+            "promotion": promotion,
         })
 
     stage = body.get("stage", "paper_approved")
@@ -470,10 +482,12 @@ def api_promotion_post():
     actor = body.get("actor", "dashboard")
     override = set_manual_override(strategy=strategy, stage=stage, note=note, actor=actor)
     _invalidate_cache("promotion_status", "research_summary")
+    promotion = resolve_promotion(strategy)
+    record_promotion_event(strategy, "override", promotion, note=note)
     return jsonify({
         "status": "override_saved",
         "override": override,
-        "promotion": resolve_promotion(strategy),
+        "promotion": promotion,
     })
 
 
@@ -878,6 +892,23 @@ def api_ops_audit():
     return jsonify({"items": recent_audit(int(request.args.get("limit", 50)))})
 
 
+@app.route("/api/ops/events", methods=["GET"])
+def api_ops_events():
+    return jsonify({
+        "database": database_summary(),
+        "audit": recent_audit_events(int(request.args.get("limit", 100))),
+        "promotion": recent_promotion_events(int(request.args.get("promotion_limit", 50))),
+    })
+
+
+@app.route("/api/ops/metrics/history", methods=["GET"])
+def api_ops_metrics_history():
+    return jsonify({
+        "metric": request.args.get("metric", "balance"),
+        "items": metric_history(request.args.get("metric", "balance"), int(request.args.get("limit", 100))),
+    })
+
+
 @app.route("/api/ops/config-snapshots", methods=["GET", "POST"])
 def api_config_snapshots():
     if request.method == "GET":
@@ -926,7 +957,13 @@ def _scoreboard_payload():
 
 @app.route("/api/scoreboard", methods=["GET"])
 def api_scoreboard():
-    return jsonify(_scoreboard_payload())
+    payload = _scoreboard_payload()
+    try:
+        record_metric_snapshot("scoreboard", "balance", float(payload.get("balance", 0) or 0), payload)
+        record_metric_snapshot("scoreboard", "realized_pnl", float(payload.get("realized_pnl", 0) or 0), payload)
+    except Exception:
+        pass
+    return jsonify(payload)
 
 
 @app.route("/api/strategy-lab", methods=["GET"])
@@ -935,6 +972,7 @@ def api_strategy_lab():
         "experiments": summarize_experiments("v15f"),
         "recent": _recent_experiments(limit=20),
         "promotion": resolve_promotion("v15f"),
+        "promotion_events": recent_promotion_events(20),
         "lifecycle": _load_strategy_lifecycle(),
         "discovery": _load("autonomous_discovery"),
         "portfolio": _load("strategy_portfolio"),
@@ -3665,7 +3703,7 @@ def _operations_page():
 <div class="card"><h3>Safety Locks</h3><div class="desc">Live mode stays locked unless intentionally unlocked.</div><div class="actions"><button class="btn danger" onclick="live('lock')">Lock Live</button><button class="btn danger" onclick="live('unlock')">Unlock 30m</button></div></div>
 <div class="card"><h3>Config Backup</h3><div class="desc">Snapshot or restore rules/safety configs.</div><div class="actions"><button class="btn" onclick="snapshot()">Snapshot</button><button class="btn" onclick="loadSnapshots()">List/Restore</button></div></div>
 <div class="card"><h3>State Maintenance</h3><div class="desc">Back up and reset local paper/runtime state.</div><div class="actions"><button class="btn danger" onclick="reset(false)">Reset Paper</button><button class="btn danger" onclick="reset(true)">Clear Runtime</button></div></div>
-</div><div class="log" id="out">Ready.</div><div class="panel" id="snapshots"></div><div class="panel" id="audit"></div>"""
+</div><div class="log" id="out">Ready.</div><div class="panel" id="opsdb"></div><div class="panel" id="snapshots"></div><div class="panel" id="audit"></div>"""
     script = """
 const out=t=>document.getElementById('out').textContent=typeof t==='string'?t:JSON.stringify(t,null,2);
 async function post(url,body={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();out(d);loadAudit();return d}
@@ -3678,7 +3716,8 @@ async function snapshot(){await post('/api/ops/config-snapshots',{label:'operati
 async function restoreSnapshot(name){if(!confirm('Restore config snapshot '+name+'?'))return;await post('/api/ops/config-snapshots',{action:'restore',name});loadSnapshots()}
 async function loadSnapshots(){const d=await(await fetch('/api/ops/config-snapshots')).json();document.getElementById('snapshots').innerHTML='<h3>Config Snapshots</h3>'+((d.items||[]).map(s=>`<div class="row"><span>${esc((s.created_at||'').slice(0,19))}</span><span>${esc(s.name)}</span><span><button class="btn" onclick="restoreSnapshot('${esc(s.name)}')">Restore</button> ${(s.files||[]).length} files</span></div>`).join('')||'No snapshots yet.')}
 async function loadAudit(){const d=await(await fetch('/api/ops/audit?limit=20')).json();document.getElementById('audit').innerHTML='<h3>Action Audit</h3>'+((d.items||[]).map(x=>`<div class="row"><span>${esc((x.time||'').slice(0,19))}</span><span class="${x.ok?'green':'amber'}">${esc(x.action)}</span><span>${esc(x.result_summary||x.detail||'')}</span></div>`).join('')||'No actions yet.')}
-loadAudit();loadSnapshots();
+async function loadOpsDb(){const d=await(await fetch('/api/ops/events?limit=8&promotion_limit=8')).json();const tables=d.database?.tables||{};document.getElementById('opsdb').innerHTML='<h3>Durable Operations DB</h3><div class="desc">'+esc(d.database?.path||'runtime/miro_ops.db')+'</div>'+Object.entries(tables).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><span>${esc(v.count)}</span><span>latest ${esc(v.latest||'none')}</span></div>`).join('')}
+loadAudit();loadSnapshots();loadOpsDb();setInterval(loadOpsDb,10000);
 """
     return _shared_shell("Operations", "Operations Console", "Grouped controls, audit trail, and config backup/restore.", body, script)
 
@@ -3690,8 +3729,11 @@ def _scoreboard_page():
 
 
 def _strategy_lab_page():
-    body = """<div id="summary" class="panel">Loading...</div><div class="panel"><h3>Strategy Comparison</h3><div id="chart" style="display:grid;gap:8px"></div></div><div id="rows" class="panel"></div>"""
-    script = """async function load(){const d=await(await fetch('/api/strategy-lab')).json();document.getElementById('summary').innerHTML=`Promotion: <b>${esc((d.promotion.status||'candidate').toUpperCase())}</b> / ${esc(d.promotion.approved_for||'research_only')}<br>Lifecycle: <b>${esc((d.lifecycle.stage||'no report').toUpperCase())}</b><br>Experiments: ${d.experiments.total_experiments||0}`;const recent=d.recent||[];document.getElementById('chart').innerHTML=recent.slice(-8).reverse().map(e=>{const r=e.results||{}, pf=Number(r.best_profit_factor||r.profit_factor||0), wr=Number(r.best_win_rate||r.win_rate||0);return `<div><div class="label">${esc(e.experiment_type||'experiment')} ${esc(e.id||'')}</div><div style="height:9px;background:#0b0d10;border:1px solid #27313b;border-radius:99px;overflow:hidden"><span style="display:block;height:100%;width:${Math.min(100,wr)}%;background:#2fd17c"></span></div><div class="sub">WR ${wr||'--'} | PF ${pf||'--'}</div></div>`}).join('')||'No experiments found.';document.getElementById('rows').innerHTML='<h3>Recent Experiments</h3>'+(recent.length?recent.slice().reverse().map(e=>{const r=e.results||{};return `<div class="row"><span>${esc(e.id||'experiment')}</span><span><span class="pill">${esc(e.experiment_type||'test')}</span></span><span>WR ${esc(r.best_win_rate||r.win_rate||'--')} | PF ${esc(r.best_profit_factor||r.profit_factor||'--')} | Applied ${r.applied?'YES':'NO'}</span></div>`}).join(''):'No experiments found.')}load();"""
+    body = """<div id="summary" class="panel">Loading...</div><div class="grid"><div class="card"><h3>Promotion Controls</h3><div class="desc">Refresh gates or allow paper trading only. Demo/live remain supervised safety stages.</div><div class="actions"><button class="btn" onclick="promotion('refresh')">Refresh Gates</button><button class="btn good" onclick="promotion('override','paper_approved')">Approve Paper</button><button class="btn danger" onclick="promotion('clear_override')">Clear Override</button></div></div><div class="card"><h3>Safety Policy</h3><div class="desc">Autonomous discovery can research and paper trade candidates. Live trading requires live lock, risk approval, MT5 readiness, and explicit supervised promotion.</div></div><div class="card"><h3>Evidence Needed</h3><div class="desc">Prefer walk-forward profit factor above 1.10, profitable windows above 50%, and paper gate above configured min trades before promotion.</div></div></div><div class="panel"><h3>Promotion Gates</h3><div id="gates"></div></div><div class="panel"><h3>Strategy Comparison</h3><div id="chart" style="display:grid;gap:8px"></div></div><div id="rows" class="panel"></div><div id="events" class="panel"></div>"""
+    script = """async function promotion(action,stage){const note=action==='override'?'Dashboard paper approval after supervised review':'';const r=await fetch('/api/promotion',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,stage,note,actor:'dashboard'})});document.getElementById('summary').textContent=JSON.stringify(await r.json(),null,2);setTimeout(load,400)}
+async function load(){const d=await(await fetch('/api/strategy-lab')).json();const p=d.promotion||{}, checks=p.checks||{};document.getElementById('summary').innerHTML=`Promotion: <b>${esc((p.status||'candidate').toUpperCase())}</b> / ${esc(p.approved_for||'research_only')}<br>Lifecycle: <b>${esc((d.lifecycle.stage||'no report').toUpperCase())}</b><br>Experiments: ${d.experiments.total_experiments||0}<br>Reason: ${esc((p.reasons||[])[0]||'No reason recorded')}`;document.getElementById('gates').innerHTML=Object.entries(checks).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><span class="${v===true||Number(v)>=1?'green':'amber'}">${esc(v)}</span><span>${esc(gateMeaning(k,v))}</span></div>`).join('')||'Run promotion refresh to generate gate details.';const recent=d.recent||[];document.getElementById('chart').innerHTML=recent.slice(-8).reverse().map(e=>{const r=e.results||{}, pf=Number(r.best_profit_factor||r.profit_factor||0), wr=Number(r.best_win_rate||r.win_rate||0);return `<div><div class="label">${esc(e.experiment_type||'experiment')} ${esc(e.id||'')}</div><div style="height:9px;background:#0b0d10;border:1px solid #27313b;border-radius:99px;overflow:hidden"><span style="display:block;height:100%;width:${Math.min(100,wr)}%;background:#2fd17c"></span></div><div class="sub">WR ${wr||'--'} | PF ${pf||'--'}</div></div>`}).join('')||'No experiments found.';document.getElementById('rows').innerHTML='<h3>Recent Experiments</h3>'+(recent.length?recent.slice().reverse().map(e=>{const r=e.results||{};return `<div class="row"><span>${esc(e.id||'experiment')}</span><span><span class="pill">${esc(e.experiment_type||'test')}</span></span><span>WR ${esc(r.best_win_rate||r.win_rate||'--')} | PF ${esc(r.best_profit_factor||r.profit_factor||'--')} | Applied ${r.applied?'YES':'NO'}</span></div>`}).join(''):'No experiments found.');document.getElementById('events').innerHTML='<h3>Promotion Event History</h3>'+((d.promotion_events||[]).map(e=>`<div class="row"><span>${esc((e.created_at||'').slice(0,19))}</span><span>${esc(e.action)}</span><span>${esc(e.stage)} / ${esc(e.approved_for)} ${esc(e.note||'')}</span></div>`).join('')||'No promotion events yet.')}
+function gateMeaning(k,v){const map={optimizer_auto_applied:'Latest optimizer candidate met auto-apply thresholds.',walk_forward_active_windows:'How many validation windows remained tradable.',walk_forward_profitable_ratio:'Share of walk-forward windows that were profitable.',walk_forward_average_profit_factor:'Average gross-profit / gross-loss across validation windows.'};return map[k]||'Promotion evidence item.'}
+load();setInterval(load,10000);"""
     return _shared_shell("Strategy Lab", "Strategy Lab", "Research candidates, promotion state, comparison bars, and experiment history.", body, script)
 
 

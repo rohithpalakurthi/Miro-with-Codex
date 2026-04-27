@@ -18,6 +18,16 @@ class OperationsPagesTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn(marker, response.get_data(as_text=True))
 
+    def test_navigation_links_are_not_stranded(self):
+        from agents.master_trader import miro_dashboard_server as server
+
+        client = server.app.test_client()
+        required = ["Operations", "Scoreboard", "Strategy Lab", "Risk Timeline", "Pipeline", "Rules"]
+        for path in ["/", "/operations", "/scoreboard", "/strategy-lab", "/risk-timeline", "/pipeline", "/rules", "/legacy"]:
+            html = client.get(path).get_data(as_text=True)
+            for label in required:
+                self.assertIn(label, html, "{} missing {}".format(path, label))
+
     def test_new_operation_apis_shape(self):
         from agents.master_trader import miro_dashboard_server as server
 

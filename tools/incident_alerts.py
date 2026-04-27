@@ -13,6 +13,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import requests
 from dotenv import load_dotenv
+from tools.telegram_router import send_message
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,19 +67,14 @@ def send_incident(title: str, detail: str, severity: str = "warn", *, throttle_s
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     )
     try:
-        response = requests.post(
-            "https://api.telegram.org/bot{}/sendMessage".format(token),
-            data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
-        body = response.json()
-        ok = bool(body.get("ok"))
+        result = send_message(text, category="incident", title=title)
+        ok = bool(result.get("sent"))
         if ok:
             state.setdefault("sent", {})[key] = time.time()
         else:
-            state.setdefault("failed", []).append({"incident": payload, "response": body})
+            state.setdefault("failed", []).append({"incident": payload, "response": result})
         _save(ALERT_STATE, state)
-        return {"ok": ok, "sent": ok, "status": response.status_code, "response": body, "key": key}
+        return {"ok": result.get("ok", ok), "sent": ok, "response": result, "key": key}
     except Exception as exc:
         state.setdefault("failed", []).append({"incident": payload, "error": str(exc)})
         _save(ALERT_STATE, state)

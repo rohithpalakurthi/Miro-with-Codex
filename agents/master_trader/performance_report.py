@@ -29,6 +29,7 @@ import matplotlib.patches as mpatches
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 STATE_FILE   = "paper_trading/logs/state.json"
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -77,18 +78,7 @@ def _send_photo(buf, caption=""):
 
 def _send_message(text):
     try:
-        import requests
-        from dotenv import load_dotenv
-        load_dotenv()
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if not token or not chat_id:
-            return
-        requests.post(
-            "https://api.telegram.org/bot{}/sendMessage".format(token),
-            data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
+        send_message(text, category="research", title="Performance report")
     except Exception:
         pass
 

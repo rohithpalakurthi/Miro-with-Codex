@@ -18,6 +18,7 @@ load_dotenv()
 sys.path.append(os.getcwd())
 
 from core.state_schema import load_json, save_json
+from tools.telegram_router import send_message
 
 # Global agent status tracker
 AGENT_STATUS = {}
@@ -581,7 +582,7 @@ def daily_pnl_summary():
     """22:00 IST daily P&L Telegram summary."""
     print("\n[SCHEDULER] Sending daily P&L summary...")
     try:
-        import json, requests
+        import json
         token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
         chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
         if not token or not chat_id:
@@ -644,11 +645,7 @@ def daily_pnl_summary():
             datetime.now().strftime("%Y-%m-%d"),
             entries_today, closes, reason_str, regime, balance
         )
-        requests.post(
-            "https://api.telegram.org/bot{}/sendMessage".format(token),
-            data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-            timeout=10
-        )
+        send_message(msg, category="system", title="Daily P&L summary")
     except Exception as e:
         print("[SCHEDULER] Daily summary error: {}".format(e))
 
@@ -850,8 +847,6 @@ if __name__ == "__main__":
     if tg_ok:
         try:
             time.sleep(5)
-            import requests as _req
-
             # Read live context
             _regime, _price, _dxy, _bias, _balance, _session = "?", "?", "?", "?", "?", "?"
             try:
@@ -911,11 +906,7 @@ if __name__ == "__main__":
                 price=_price, regime=_regime, bias=_bias, balance=_balance,
                 gpt=_openai_ok, claude=_anthropic_ok
             )
-            _req.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(os.getenv("TELEGRAM_BOT_TOKEN")),
-                data={"chat_id": os.getenv("TELEGRAM_CHAT_ID"), "text": _msg, "parse_mode": "HTML"},
-                timeout=10
-            )
+            send_message(_msg, category="startup", title="MIRO launch summary")
         except Exception as _e:
             print("[LAUNCHER] Startup Telegram failed: {}".format(_e))
 
@@ -948,7 +939,6 @@ if __name__ == "__main__":
         print("\nShutting down MiroTrade...")
         if tg_ok:
             try:
-                import requests as _req
                 _uptime  = datetime.now() - _launch_time
                 _hours   = int(_uptime.total_seconds() // 3600)
                 _minutes = int((_uptime.total_seconds() % 3600) // 60)
@@ -990,10 +980,6 @@ if __name__ == "__main__":
                     entries=_entries, closes=_closes,
                     stopped=_stopped_str
                 )
-                _req.post(
-                    "https://api.telegram.org/bot{}/sendMessage".format(os.getenv("TELEGRAM_BOT_TOKEN")),
-                    data={"chat_id": os.getenv("TELEGRAM_CHAT_ID"), "text": _msg, "parse_mode": "HTML"},
-                    timeout=10
-                )
+                send_message(_msg, category="startup", title="MIRO offline summary")
             except: pass
         print("Goodbye.")

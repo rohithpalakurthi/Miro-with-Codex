@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 TOKEN        = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID      = str(os.getenv("TELEGRAM_CHAT_ID", ""))
@@ -46,9 +47,7 @@ BASE_URL     = "https://api.telegram.org/bot{}".format(TOKEN)
 
 def send(text):
     try:
-        requests.post(BASE_URL + "/sendMessage",
-                      data={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
-                      timeout=5)
+        send_message(text, category="command", title="Telegram command reply", force=True)
     except:
         pass
 

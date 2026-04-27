@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 MIRO Market Regime Detector
 
@@ -6,11 +6,11 @@ Detects the current market regime every 5 minutes and writes to regime.json.
 master_trader.py reads this to switch strategy automatically.
 
 Regimes:
-  TRENDING_BULL  — buy dips, wide targets, hold longer
-  TRENDING_BEAR  — sell rallies, wide targets, hold longer
-  RANGING        — fade extremes, tight targets, quick exits
-  HIGH_VOLATILITY— reduce size 50%, widen SL, avoid reversals
-  CHOPPY         — no trading, wait for structure
+  TRENDING_BULL  â€” buy dips, wide targets, hold longer
+  TRENDING_BEAR  â€” sell rallies, wide targets, hold longer
+  RANGING        â€” fade extremes, tight targets, quick exits
+  HIGH_VOLATILITYâ€” reduce size 50%, widen SL, avoid reversals
+  CHOPPY         â€” no trading, wait for structure
 """
 
 import json, os, sys, time
@@ -18,6 +18,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 REGIME_FILE = "agents/master_trader/regime.json"
 
@@ -160,27 +161,22 @@ def run():
                     json.dump(result, f, indent=2)
 
                 if result["regime"] != last_regime:
-                    print("[Regime] REGIME CHANGE → {} ({}% confidence) | {}".format(
+                    print("[Regime] REGIME CHANGE â†’ {} ({}% confidence) | {}".format(
                         result["regime"], result["confidence"], result["note"]))
                     last_regime = result["regime"]
 
                     try:
-                        import requests
-                        token   = os.getenv("TELEGRAM_BOT_TOKEN","")
-                        chat_id = os.getenv("TELEGRAM_CHAT_ID","")
-                        if token and chat_id:
-                            requests.post(
-                                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                                data={"chat_id": chat_id, "parse_mode": "HTML",
-                                      "text": "<b>🔄 MIRO REGIME CHANGE</b>\n"
-                                              "New regime: <b>{}</b> ({}% confidence)\n"
-                                              "Vol ratio: {}x | EMA: {}\n"
-                                              "<i>{}</i>".format(
-                                                  result["regime"], result["confidence"],
-                                                  result["vol_ratio"], result["ema_stack"],
-                                                  result["note"])},
-                                timeout=5
-                            )
+                        send_message(
+                            "<b>MIRO REGIME CHANGE</b>\n"
+                            "New regime: <b>{}</b> ({}% confidence)\n"
+                            "Vol ratio: {}x | EMA: {}\n"
+                            "<i>{}</i>".format(
+                                result["regime"], result["confidence"],
+                                result["vol_ratio"], result["ema_stack"],
+                                result["note"]),
+                            category="trade",
+                            title="Regime change",
+                        )
                     except: pass
                 else:
                     print("[Regime] {} | Vol:{:.1f}x | Dir:{:+.1f}%".format(

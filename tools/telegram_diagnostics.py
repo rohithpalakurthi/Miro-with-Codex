@@ -11,6 +11,7 @@ from typing import Any, Dict
 
 import requests
 from dotenv import load_dotenv
+from tools.telegram_router import send_message
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,18 +114,12 @@ def send_test() -> Dict[str, Any]:
     if not token or not chat_id:
         return {"ok": False, "error": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing"}
     text = "<b>MIRO Telegram Test</b>\nDiagnostics sent at {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    response = requests.post(
-        "https://api.telegram.org/bot{}/sendMessage".format(token),
-        data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-        timeout=10,
-    )
-    try:
-        payload = response.json()
-    except Exception:
-        payload = {"raw": response.text}
+    payload = send_message(text, category="system", title="Telegram test")
     return {
-        "status": response.status_code,
+        "status": payload.get("status"),
         "ok": bool(payload.get("ok")),
+        "sent": bool(payload.get("sent")),
+        "muted": bool(payload.get("muted")),
         "error": None if payload.get("ok") else payload,
     }
 

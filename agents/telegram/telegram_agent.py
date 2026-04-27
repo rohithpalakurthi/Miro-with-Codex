@@ -25,6 +25,7 @@ import os
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+from tools.telegram_router import send_message
 
 load_dotenv()
 
@@ -77,19 +78,15 @@ class TelegramAlertAgent:
             print(text)
             return False
 
-        url  = "https://api.telegram.org/bot{}/sendMessage".format(self.bot_token)
-        data = {
-            "chat_id"    : self.chat_id,
-            "text"       : text,
-            "parse_mode" : parse_mode
-        }
         try:
-            r = requests.post(url, data=data, timeout=10)
-            if r.status_code == 200:
+            result = send_message(text, category=None, parse_mode=parse_mode)
+            if result.get("sent"):
                 return True
-            else:
-                print("Telegram error: {}".format(r.text))
+            if result.get("muted"):
+                print("Telegram muted/queued: {}".format(result.get("category")))
                 return False
+            print("Telegram error: {}".format(result))
+            return False
         except Exception as e:
             print("Telegram send error: {}".format(e))
             return False

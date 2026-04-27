@@ -20,6 +20,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from tools.telegram_router import send_message
 
 NGROK_URLS = [
     "./ngrok.exe",
@@ -110,14 +112,7 @@ def save_status(status):
 def send_telegram(msg):
     """Send Telegram notification."""
     try:
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                timeout=5
-            )
+        send_message(msg, category="trade", title="TradingView bridge")
     except:
         pass
 

@@ -33,6 +33,7 @@ from strategies.smc.bos_detector import detect_swing_points, detect_bos
 from strategies.confluence.confluence_engine import (
     add_ema, add_support_resistance, run_confluence_engine
 )
+from tools.telegram_router import send_message
 
 # --- M5 Settings ---
 SYMBOL             = "XAUUSD"
@@ -262,15 +263,7 @@ class M5ScalpingEngine:
 
     def send_telegram(self, msg):
         try:
-            import requests
-            token   = os.getenv("TELEGRAM_BOT_TOKEN","")
-            chat_id = os.getenv("TELEGRAM_CHAT_ID","")
-            if token and chat_id:
-                requests.post(
-                    "https://api.telegram.org/bot{}/sendMessage".format(token),
-                    data={"chat_id":chat_id,"text":msg,"parse_mode":"HTML"},
-                    timeout=5
-                )
+            send_message(msg, category="trade", title="M5 scalper")
         except: pass
 
     def print_status(self, signal, score, session):

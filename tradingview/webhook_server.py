@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 app = Flask(__name__)
 
@@ -268,15 +269,7 @@ def write_signal(action, price, sl, tp1, tp2, lots, source, signal_type=""):
 def send_telegram(message):
     """Send Telegram notification."""
     try:
-        import requests
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
-                timeout=5
-            )
+        send_message(message, category="trade", title="TradingView webhook")
     except:
         pass
 

@@ -27,6 +27,7 @@ load_dotenv()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from strategies.scalper_v15.scalper_v15 import run_v15f, PARAMS
+from tools.telegram_router import send_message
 
 STATE_FILE = "agents/master_trader/multi_symbol_state.json"
 SCAN_INTERVAL = 60
@@ -58,14 +59,8 @@ SYMBOLS = {
 
 
 def _tg(msg):
-    if not TG_TOKEN or not TG_CHAT:
-        return
     try:
-        requests.post(
-            "https://api.telegram.org/bot{}/sendMessage".format(TG_TOKEN),
-            data={"chat_id": TG_CHAT, "text": msg, "parse_mode": "HTML"},
-            timeout=10,
-        )
+        send_message(msg, category="trade", title="Multi-symbol paper trader")
     except Exception:
         pass
 

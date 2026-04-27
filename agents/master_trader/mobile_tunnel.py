@@ -24,6 +24,7 @@ import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from tools.telegram_router import send_message
 
 load_dotenv()
 
@@ -36,14 +37,8 @@ NGROK_DOMAIN   = os.getenv("NGROK_DOMAIN", "")
 
 
 def _tg(msg):
-    if not TG_TOKEN or not TG_CHAT:
-        return
     try:
-        requests.post(
-            "https://api.telegram.org/bot{}/sendMessage".format(TG_TOKEN),
-            data={"chat_id": TG_CHAT, "text": msg, "parse_mode": "HTML"},
-            timeout=10,
-        )
+        send_message(msg, category="tunnel", title="MIRO Tunnel")
     except Exception:
         pass
 

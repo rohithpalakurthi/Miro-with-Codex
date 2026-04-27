@@ -18,6 +18,7 @@ load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from strategies.scalper_v15.scalper_v15 import run_v15f
+from tools.telegram_router import send_message
 
 SIGNAL_FILE = "live_execution/bridge/signal.json"
 TV_LOG      = "tradingview/tv_signals_log.json"
@@ -102,12 +103,7 @@ class TVSignalPoller:
 
     def send_telegram(self, msg):
         try:
-            import requests
-            t = os.getenv("TELEGRAM_BOT_TOKEN","")
-            c = os.getenv("TELEGRAM_CHAT_ID","")
-            if t and c:
-                requests.post("https://api.telegram.org/bot{}/sendMessage".format(t),
-                    data={"chat_id":c,"text":msg,"parse_mode":"HTML"}, timeout=5)
+            send_message(msg, category="trade", title="TradingView poller")
         except: pass
 
     def scan_once(self):

@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 LOG_FILE         = "agents/master_trader/trade_log.json"
 PERF_FILE        = "agents/master_trader/performance.json"
@@ -25,15 +26,7 @@ THRESHOLDS_FILE  = "agents/master_trader/adaptive_thresholds.json"
 
 def send_telegram(message):
     try:
-        import requests
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
-                timeout=5
-            )
+        send_message(message, category="research", title="Performance tracker")
     except:
         pass
 

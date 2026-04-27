@@ -55,6 +55,7 @@ class OperationsPagesTests(unittest.TestCase):
             ("/api/simulation-lab", "modes"),
             ("/api/setup-wizard", "steps"),
             ("/api/kill-switch", "active"),
+            ("/api/telegram-control", "control"),
         ]:
             response = client.get(path)
             self.assertEqual(response.status_code, 200)

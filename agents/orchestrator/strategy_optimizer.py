@@ -33,6 +33,7 @@ from backtesting.research.promotion import evaluate_promotion
 from backtesting.research.strategy_research import get_strategy, load_research_dataframe
 from backtesting.research.walk_forward import run_backtest_summary, walk_forward_validate
 from strategies.scalper_v15.scalper_v15 import backtest_v15f, PARAMS as V15F_DEFAULT_PARAMS
+from tools.telegram_router import send_message
 
 RESULTS_DIR  = "backtesting/reports"
 IMPROVE_LOG  = "agents/orchestrator/improvement_log.json"
@@ -63,15 +64,7 @@ os.makedirs("agents/orchestrator", exist_ok=True)
 # ── Telegram helper ─────────────────────────────────────────────
 def _tg(msg):
     try:
-        import requests
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                timeout=10,
-            )
+        send_message(msg, category="research", title="Strategy optimizer")
     except Exception:
         pass
 

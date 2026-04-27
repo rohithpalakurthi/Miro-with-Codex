@@ -27,6 +27,15 @@ from live_execution.safety import evaluate_live_safety, load_config as load_live
 from tools.reset_state import reset_state
 from tools.system_health import run_health_check
 from tools.telegram_diagnostics import send_test as send_telegram_test
+from tools.telegram_router import (
+    CATEGORIES as TELEGRAM_CATEGORIES,
+    clear_digest as clear_telegram_digest,
+    digest_status as telegram_digest_status,
+    load_control as load_telegram_control,
+    recent_messages as recent_telegram_messages,
+    save_control as save_telegram_control,
+    send_digest as send_telegram_digest,
+)
 from tools.agent_supervisor import (
     restart as restart_agents,
     start as start_agents,
@@ -1054,6 +1063,34 @@ def api_system_health():
 @app.route("/api/telegram-test", methods=["POST"])
 def api_telegram_test():
     return jsonify(send_telegram_test())
+
+
+@app.route("/api/telegram-control", methods=["GET", "POST"])
+def api_telegram_control():
+    if request.method == "GET":
+        return jsonify({
+            "control": load_telegram_control(),
+            "categories": TELEGRAM_CATEGORIES,
+            "digest": telegram_digest_status(),
+            "recent": recent_telegram_messages(60),
+        })
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "save")).lower()
+    if action == "send_digest":
+        result = send_telegram_digest(force=True)
+    elif action == "clear_digest":
+        result = clear_telegram_digest()
+    else:
+        result = save_telegram_control(payload)
+    audit("telegram_control_{}".format(action), result)
+    return jsonify({
+        "ok": True,
+        "action": action,
+        "result": result,
+        "control": load_telegram_control(),
+        "digest": telegram_digest_status(),
+        "recent": recent_telegram_messages(60),
+    })
 
 
 @app.route("/api/reset-state", methods=["POST"])
@@ -4298,11 +4335,12 @@ def _operations_page():
 <div class="card"><h3>Agent Runtime</h3><div class="desc">Control supervised launch.py process.</div><div class="actions"><button class="btn good" onclick="agents('start')">Start</button><button class="btn" onclick="agents('restart')">Restart</button><button class="btn danger" onclick="agents('stop')">Stop</button></div></div>
 <div class="card"><h3>Monitoring</h3><div class="desc">Health checks and watchdog auto-recovery.</div><div class="actions"><button class="btn" onclick="health()">Health</button><button class="btn good" onclick="watchdog('start')">Start Watchdog</button><button class="btn" onclick="watchdog('check')">Check</button><button class="btn danger" onclick="watchdog('stop')">Stop</button></div></div>
 <div class="card"><h3>Communication</h3><div class="desc">Verify Telegram and incident alerts.</div><div class="actions"><button class="btn good" onclick="post('/api/telegram-test')">Telegram</button><button class="btn good" onclick="post('/api/incident-test')">Incident</button></div></div>
+<div class="card"><h3>Telegram Noise Control</h3><div class="desc">Mute noisy bot notifications or collect them into grouped digest buckets. Command replies still work.</div><div class="actions"><button class="btn danger" onclick="telegramMute(true)">Mute</button><button class="btn good" onclick="telegramMute(false)">Unmute</button><button class="btn" onclick="telegramMode('digest')">Digest Mode</button><button class="btn" onclick="telegramMode('instant')">Instant Mode</button></div></div>
 <div class="card"><h3>Safety Locks</h3><div class="desc">Live mode stays locked unless intentionally unlocked.</div><div class="actions"><button class="btn danger" onclick="live('lock')">Lock Live</button><button class="btn danger" onclick="live('unlock')">Unlock 30m</button></div></div>
 <div class="card"><h3>Kill Switch</h3><div class="desc">Emergency stop: pause MIRO, lock live mode, stop agents, and stop the watchdog. Dashboard stays online for recovery.</div><div class="actions"><button class="btn danger" onclick="killSwitch()">KILL SWITCH</button></div></div>
 <div class="card"><h3>Config Backup</h3><div class="desc">Snapshot or restore rules/safety configs.</div><div class="actions"><button class="btn" onclick="snapshot()">Snapshot</button><button class="btn" onclick="loadSnapshots()">List/Restore</button></div></div>
 <div class="card"><h3>State Maintenance</h3><div class="desc">Back up and reset local paper/runtime state.</div><div class="actions"><button class="btn danger" onclick="reset(false)">Reset Paper</button><button class="btn danger" onclick="reset(true)">Clear Runtime</button></div></div>
-</div><div class="log" id="out">Ready.</div><div class="panel" id="opsdb"></div><div class="panel" id="snapshots"></div><div class="panel" id="audit"></div>"""
+</div><div class="log" id="out">Ready.</div><div class="panel" id="telegramPanel"></div><div class="panel" id="opsdb"></div><div class="panel" id="snapshots"></div><div class="panel" id="audit"></div>"""
     script = """
 const out=t=>document.getElementById('out').textContent=typeof t==='string'?t:JSON.stringify(t,null,2);
 async function post(url,body={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();out(d);loadAudit();return d}
@@ -4311,13 +4349,19 @@ async function watchdog(action){return post('/api/watchdog/control',{action})}
 async function health(){out(await(await fetch('/api/system-health')).json())}
 async function live(action){if(action==='unlock'&&!confirm('Unlock live mode for 30 minutes?'))return;return post('/api/live-lock',{action,minutes:30,reason:'Operations page '+action})}
 async function killSwitch(){if(!confirm('Emergency kill switch? This pauses trading, locks live mode, and stops agents/watchdog. Dashboard remains online.'))return;return post('/api/kill-switch',{reason:'Operations kill switch'})}
+async function telegramMute(muted){await post('/api/telegram-control',{muted});loadTelegram()}
+async function telegramMode(mode){await post('/api/telegram-control',{mode});loadTelegram()}
+async function telegramCategory(name,on){const categories={};categories[name]=on;await post('/api/telegram-control',{categories});loadTelegram()}
+async function sendDigest(){if(!confirm('Send one grouped Telegram digest now?'))return;await post('/api/telegram-control',{action:'send_digest'});loadTelegram()}
+async function clearDigest(){if(!confirm('Clear queued Telegram digest messages without sending?'))return;await post('/api/telegram-control',{action:'clear_digest'});loadTelegram()}
 async function reset(include_runtime){if(!confirm(include_runtime?'Clear runtime and reset paper?':'Reset paper state?'))return post('/api/reset-state',{paper_balance:10000,include_runtime})}
 async function snapshot(){await post('/api/ops/config-snapshots',{label:'operations_page'});loadSnapshots()}
 async function restoreSnapshot(name){if(!confirm('Restore config snapshot '+name+'?'))return;await post('/api/ops/config-snapshots',{action:'restore',name});loadSnapshots()}
 async function loadSnapshots(){const d=await(await fetch('/api/ops/config-snapshots')).json();document.getElementById('snapshots').innerHTML='<h3>Config Snapshots</h3>'+((d.items||[]).map(s=>`<div class="row"><span>${esc((s.created_at||'').slice(0,19))}</span><span>${esc(s.name)}</span><span><button class="btn" onclick="restoreSnapshot('${esc(s.name)}')">Restore</button> ${(s.files||[]).length} files</span></div>`).join('')||'No snapshots yet.')}
 async function loadAudit(){const d=await(await fetch('/api/ops/audit?limit=20')).json();document.getElementById('audit').innerHTML='<h3>Action Audit</h3>'+((d.items||[]).map(x=>`<div class="row"><span>${esc((x.time||'').slice(0,19))}</span><span class="${x.ok?'green':'amber'}">${esc(x.action)}</span><span>${esc(x.result_summary||x.detail||'')}</span></div>`).join('')||'No actions yet.')}
 async function loadOpsDb(){const d=await(await fetch('/api/ops/events?limit=8&promotion_limit=8')).json();const tables=d.database?.tables||{};document.getElementById('opsdb').innerHTML='<h3>Durable Operations DB</h3><div class="desc">'+esc(d.database?.path||'runtime/miro_ops.db')+'</div>'+Object.entries(tables).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><span>${esc(v.count)}</span><span>latest ${esc(v.latest||'none')}</span></div>`).join('')}
-loadAudit();loadSnapshots();loadOpsDb();setInterval(loadOpsDb,10000);
+async function loadTelegram(){const d=await(await fetch('/api/telegram-control')).json();const c=d.control||{}, cats=d.categories||{}, digest=d.digest||{}, grouped=d.recent?.grouped||{};const catRows=Object.entries(cats).map(([name,desc])=>`<div class="row"><span>${esc(name)}</span><span><button class="btn ${c.categories?.[name]?'good':'danger'}" onclick="telegramCategory('${esc(name)}',${!c.categories?.[name]})">${c.categories?.[name]?'ON':'OFF'}</button></span><span>${esc(desc)} | recent ${(grouped[name]||[]).length} | queued ${digest.by_category?.[name]||0}</span></div>`).join('');document.getElementById('telegramPanel').innerHTML=`<h3>Telegram Notification Control</h3><div class="desc">Status: <b class="${c.muted?'amber':'green'}">${c.muted?'MUTED':'UNMUTED'}</b> | Mode: <b>${esc(c.mode)}</b> | Queued digest: <b>${digest.pending_count||0}</b>. Digest mode groups noise instead of sending every startup/tunnel/incident message.</div><div class="actions"><button class="btn danger" onclick="telegramMute(true)">Mute all bot noise</button><button class="btn good" onclick="telegramMute(false)">Unmute</button><button class="btn" onclick="telegramMode('digest')">Group as digest</button><button class="btn" onclick="telegramMode('instant')">Send instantly</button><button class="btn good" onclick="sendDigest()">Send Digest</button><button class="btn danger" onclick="clearDigest()">Clear Queue</button></div><h3>Categories</h3>${catRows}`;}
+loadAudit();loadSnapshots();loadOpsDb();loadTelegram();setInterval(loadOpsDb,10000);setInterval(loadTelegram,10000);
 """
     return _shared_shell("Operations", "Operations Console", "Grouped controls, audit trail, and config backup/restore.", body, script)
 

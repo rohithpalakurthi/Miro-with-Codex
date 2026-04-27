@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 CALENDAR_FILE  = "agents/master_trader/economic_calendar.json"
 PAUSE_FILE     = "agents/master_trader/paused.flag"
@@ -50,14 +51,7 @@ KNOWN_EVENTS = [
 
 def send_telegram(msg):
     try:
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                timeout=5
-            )
+        send_message(msg, category="incident", title="Economic calendar")
     except:
         pass
 

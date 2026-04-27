@@ -30,6 +30,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 STATE_FILE = "agents/master_trader/partial_entry_state.json"
 LOG_FILE   = "agents/master_trader/trade_log.json"
@@ -73,13 +74,7 @@ def _log(event_dict):
 
 def _send_telegram(msg):
     try:
-        import requests
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post("https://api.telegram.org/bot{}/sendMessage".format(token),
-                         data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                         timeout=5)
+        send_message(msg, category="trade", title="Partial entry")
     except: pass
 
 

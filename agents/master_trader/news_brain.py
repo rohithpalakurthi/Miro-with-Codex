@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 NEWS_API_KEY  = os.getenv("NEWS_API_KEY", "")
 OPENAI_KEY    = os.getenv("OPENAI_API_KEY", "")
@@ -40,14 +41,7 @@ HIGH_IMPACT   = ["nfp", "non-farm", "cpi", "inflation", "fomc", "fed meeting",
 
 def send_telegram(message):
     try:
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": message, "parse_mode": "HTML"},
-                timeout=5
-            )
+        send_message(message, category="incident", title="News brain")
     except:
         pass
 

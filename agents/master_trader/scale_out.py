@@ -20,6 +20,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 SCALE_STATE_FILE = "agents/master_trader/scale_out_state.json"
 TP_TARGETS_FILE  = "agents/master_trader/tp_targets.json"
@@ -35,15 +36,7 @@ TP1_TRIGGER_PTS = 0.5   # trigger smart exit within 0.5pts of TP1 price
 
 def send_telegram(msg):
     try:
-        import requests
-        token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-        chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
-        if token and chat_id:
-            requests.post(
-                "https://api.telegram.org/bot{}/sendMessage".format(token),
-                data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
-                timeout=5
-            )
+        send_message(msg, category="trade", title="Scale out")
     except:
         pass
 

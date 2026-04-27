@@ -15,6 +15,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+from tools.telegram_router import send_message
 
 JOURNAL_FILE = "agents/master_trader/journal.json"
 LOG_FILE     = "agents/master_trader/trade_log.json"
@@ -23,11 +24,7 @@ SEEN_FILE    = "agents/master_trader/journal_seen.json"
 
 def send_telegram(msg):
     try:
-        import requests
-        token, chat_id = os.getenv("TELEGRAM_BOT_TOKEN",""), os.getenv("TELEGRAM_CHAT_ID","")
-        if token and chat_id:
-            requests.post("https://api.telegram.org/bot{}/sendMessage".format(token),
-                          data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}, timeout=5)
+        send_message(msg, category="trade", title="Trade journal")
     except: pass
 
 

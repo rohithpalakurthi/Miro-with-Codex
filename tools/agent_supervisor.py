@@ -17,6 +17,8 @@ RUNTIME_DIR = ROOT / "runtime"
 PID_FILE = RUNTIME_DIR / "agents.pid"
 STATUS_FILE = RUNTIME_DIR / "agent_supervisor.json"
 LOG_FILE = ROOT / "logs" / "agents_supervisor.log"
+WATCHDOG_PID_FILE = RUNTIME_DIR / "watchdog.pid"
+WATCHDOG_LOG_FILE = ROOT / "logs" / "watchdog.log"
 
 
 def _now() -> str:
@@ -127,15 +129,70 @@ def restart() -> Dict[str, Any]:
     })
 
 
+def watchdog_status() -> Dict[str, Any]:
+    pid = None
+    try:
+        if WATCHDOG_PID_FILE.exists():
+            pid = int(WATCHDOG_PID_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        pid = None
+    return {
+        "service": "watchdog.py",
+        "pid": pid,
+        "running": _process_running(pid),
+        "state": "running" if _process_running(pid) else "stopped",
+        "pid_file": str(WATCHDOG_PID_FILE),
+        "log_file": str(WATCHDOG_LOG_FILE),
+        "updated_at": _now(),
+    }
+
+
+def start_watchdog() -> Dict[str, Any]:
+    current = watchdog_status()
+    if current["running"]:
+        return _write_status({**current, "action": "start_watchdog", "message": "Watchdog already running."})
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    WATCHDOG_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with WATCHDOG_LOG_FILE.open("ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, "tools/watchdog.py", "--loop"],
+            cwd=str(ROOT),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            close_fds=True,
+        )
+    WATCHDOG_PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    time.sleep(1)
+    return _write_status({**watchdog_status(), "action": "start_watchdog", "message": "Watchdog started."})
+
+
+def stop_watchdog(timeout: float = 8.0) -> Dict[str, Any]:
+    current = watchdog_status()
+    pid = current.get("pid")
+    if current["running"]:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=timeout)
+        else:
+            os.kill(int(pid), signal.SIGTERM)
+    if WATCHDOG_PID_FILE.exists():
+        WATCHDOG_PID_FILE.unlink()
+    time.sleep(1)
+    return _write_status({**watchdog_status(), "action": "stop_watchdog", "message": "Watchdog stopped."})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start/stop/restart MIRO launch.py agents.")
-    parser.add_argument("action", choices=["status", "start", "stop", "restart"])
+    parser.add_argument("action", choices=["status", "start", "stop", "restart", "watchdog-status", "watchdog-start", "watchdog-stop"])
     args = parser.parse_args()
     actions = {
         "status": status,
         "start": start,
         "stop": stop,
         "restart": restart,
+        "watchdog-status": watchdog_status,
+        "watchdog-start": start_watchdog,
+        "watchdog-stop": stop_watchdog,
     }
     json.dump(actions[args.action](), sys.stdout, indent=2)
     print()

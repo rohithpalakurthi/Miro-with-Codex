@@ -22,6 +22,22 @@ Health check:
 .\health_check.ps1
 ```
 
+Agent control:
+
+```powershell
+.\agent_control.ps1 status
+.\agent_control.ps1 start
+.\agent_control.ps1 restart
+.\agent_control.ps1 stop
+```
+
+Watchdog:
+
+```powershell
+python tools\watchdog.py
+python tools\watchdog.py --loop
+```
+
 Operations runbook: `docs/OPERATIONS.md`.
 
 ## 1. Open MT5 First

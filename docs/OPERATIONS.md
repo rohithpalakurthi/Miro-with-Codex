@@ -8,6 +8,8 @@ This project is designed to run from a clean source tree while keeping live stat
 - `run_dashboard.ps1` starts the dashboard at `http://localhost:5055`.
 - `run_agents.ps1` starts the full agent orchestra through `launch.py`.
 - `agent_control.ps1 status|start|stop|restart` manages the supervised `launch.py` process.
+- `python tools\watchdog.py --loop` watches health/runtime freshness and can auto-start or restart agents.
+- `python tools\daily_routine.py` runs the daily maintenance checklist. Add `--execute-heavy` for heavier research jobs.
 - `health_check.ps1` runs the same system health engine exposed in the dashboard.
 - `protect_main.ps1` attempts to enable GitHub branch protection with `gh`; if unavailable, enable it in GitHub UI.
 
@@ -20,6 +22,10 @@ Open `http://localhost:5055` and use **System Operations**:
 - `Reset Paper` backs up and resets paper trading state to `$10,000`.
 - `Clear Runtime` backs up paper/runtime files, removes stale local runtime JSON, and should be followed by restarting agents.
 - `Start/Stop/Restart Agents` controls the supervised background `launch.py` process and writes PID/status to `runtime/`.
+- `Start/Stop/Watchdog Check` controls stale-agent auto-recovery.
+- `Agent Log` and `Optimizer Log` show recent logs directly in the dashboard.
+- `Daily Routine` runs the lightweight daily maintenance sequence.
+- `Lock Live` and `Unlock Live 30m` manage the separate live-mode lock. Unlocking this does not bypass promotion, risk, circuit breaker, or manual override gates.
 
 ## Git safety
 

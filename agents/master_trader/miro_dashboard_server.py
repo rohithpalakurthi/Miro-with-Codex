@@ -26,7 +26,20 @@ from live_execution.safety import evaluate_live_safety, load_config as load_live
 from tools.reset_state import reset_state
 from tools.system_health import run_health_check
 from tools.telegram_diagnostics import send_test as send_telegram_test
-from tools.agent_supervisor import restart as restart_agents, start as start_agents, status as agents_process_status, stop as stop_agents
+from tools.agent_supervisor import (
+    restart as restart_agents,
+    start as start_agents,
+    start_watchdog,
+    status as agents_process_status,
+    stop as stop_agents,
+    stop_watchdog,
+    watchdog_status,
+)
+from tools.daily_routine import run_daily_routine
+from tools.incident_alerts import send_incident
+from tools.live_mode_lock import lock as lock_live_mode, status as live_mode_lock_status, unlock as unlock_live_mode
+from tools.log_viewer import tail_log
+from tools.watchdog import check_once as watchdog_check_once
 
 FILES = {
     "regime"         : "agents/master_trader/regime.json",
@@ -788,6 +801,55 @@ def api_agents_control():
     if action not in actions:
         return jsonify({"ok": False, "error": "Unsupported action {}".format(action)}), 400
     return jsonify(actions[action]())
+
+
+@app.route("/api/watchdog/status", methods=["GET"])
+def api_watchdog_status():
+    return jsonify(watchdog_status())
+
+
+@app.route("/api/watchdog/control", methods=["POST"])
+def api_watchdog_control():
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "status")).lower()
+    actions = {
+        "status": watchdog_status,
+        "start": start_watchdog,
+        "stop": stop_watchdog,
+        "check": watchdog_check_once,
+    }
+    if action not in actions:
+        return jsonify({"ok": False, "error": "Unsupported action {}".format(action)}), 400
+    return jsonify(actions[action]())
+
+
+@app.route("/api/logs", methods=["GET"])
+def api_logs():
+    return jsonify(tail_log(request.args.get("name", "agents"), int(request.args.get("max_chars", 8000))))
+
+
+@app.route("/api/daily-routine", methods=["POST"])
+def api_daily_routine():
+    payload = request.get_json(silent=True) or {}
+    return jsonify(run_daily_routine(execute_heavy=bool(payload.get("execute_heavy", False))))
+
+
+@app.route("/api/incident-test", methods=["POST"])
+def api_incident_test():
+    return jsonify(send_incident("Manual dashboard incident test", "Operator tested Telegram incident alerting.", "info", throttle_seconds=0))
+
+
+@app.route("/api/live-lock", methods=["GET", "POST"])
+def api_live_lock():
+    if request.method == "GET":
+        return jsonify(live_mode_lock_status())
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "status")).lower()
+    if action == "unlock":
+        return jsonify(unlock_live_mode(actor="dashboard", minutes=int(payload.get("minutes", 30)), reason=str(payload.get("reason", "Dashboard unlock"))))
+    if action == "lock":
+        return jsonify(lock_live_mode(str(payload.get("reason", "Dashboard lock"))))
+    return jsonify(live_mode_lock_status())
 
 
 @app.route("/favicon.ico")
@@ -2606,6 +2668,15 @@ button,input,select{font:inherit}
               <button class="btn good" onclick="controlAgents('start')">Start Agents</button>
               <button class="btn" onclick="controlAgents('restart')">Restart Agents</button>
               <button class="btn danger" onclick="controlAgents('stop')">Stop Agents</button>
+              <button class="btn good" onclick="controlWatchdog('start')">Start Watchdog</button>
+              <button class="btn" onclick="controlWatchdog('check')">Watchdog Check</button>
+              <button class="btn danger" onclick="controlWatchdog('stop')">Stop Watchdog</button>
+              <button class="btn" onclick="runDailyRoutine()">Daily Routine</button>
+              <button class="btn" onclick="loadLog('agents')">Agent Log</button>
+              <button class="btn" onclick="loadLog('optimizer')">Optimizer Log</button>
+              <button class="btn good" onclick="testIncident()">Incident Alert</button>
+              <button class="btn danger" onclick="setLiveLock('lock')">Lock Live</button>
+              <button class="btn danger" onclick="setLiveLock('unlock')">Unlock Live 30m</button>
               <button class="btn danger" onclick="resetPaper(false)">Reset Paper</button>
               <button class="btn danger" onclick="resetPaper(true)">Clear Runtime</button>
             </div>
@@ -2761,6 +2832,63 @@ async function controlAgents(action){
     ].join('\n'), d.running?'ok':'warn');
     setTimeout(refreshAll,1500);
   }catch(e){setOps('Agent control failed: '+e.message,'error');}
+}
+
+async function controlWatchdog(action){
+  if(action==='stop'&&!confirm('Stop watchdog auto-recovery?'))return;
+  setOps('Watchdog '+action+' requested...', 'warn');
+  try{
+    const r=await fetch('/api/watchdog/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    setOps([
+      'Watchdog action: '+(d.action||action),
+      'State: '+(d.state||d.health_status||'unknown'),
+      'Score: '+(d.health_score==null?'--':d.health_score),
+      'PID: '+(d.pid||((d.agent_process||{}).pid)||'--'),
+      'Actions: '+((d.actions||[]).length||0)
+    ].join('\n'), (d.running||d.health_status==='ok')?'ok':'warn');
+  }catch(e){setOps('Watchdog control failed: '+e.message,'error');}
+}
+
+async function loadLog(name){
+  setOps('Loading '+name+' log...', 'warn');
+  try{
+    const r=await fetch('/api/logs?name='+encodeURIComponent(name)+'&max_chars=12000');
+    const d=await r.json();
+    setOps((d.exists?'Log: '+d.path:'Missing log: '+d.path)+'\n\n'+(d.content||''), d.exists?'ok':'warn');
+  }catch(e){setOps('Log load failed: '+e.message,'error');}
+}
+
+async function runDailyRoutine(){
+  if(!confirm('Run daily maintenance routine now? Heavy backtests stay skipped from the dashboard quick action.'))return;
+  setOps('Running daily routine...', 'warn');
+  try{
+    const r=await fetch('/api/daily-routine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execute_heavy:false})});
+    const d=await r.json();
+    setOps('Daily routine '+(d.ok?'passed':'needs attention')+'\nNext: '+(d.next_action||'--')+'\nSteps: '+(d.steps||[]).map(s=>s.name+': '+(s.ok?'OK':'CHECK')).join('\n'), d.ok?'ok':'warn');
+  }catch(e){setOps('Daily routine failed: '+e.message,'error');}
+}
+
+async function testIncident(){
+  if(!confirm('Send a Telegram incident test alert?'))return;
+  setOps('Sending incident test...', 'warn');
+  try{
+    const r=await fetch('/api/incident-test',{method:'POST'});
+    const d=await r.json();
+    setOps(d.sent?'Incident alert sent.':'Incident alert not sent: '+(d.reason||d.error||JSON.stringify(d)), d.sent?'ok':'warn');
+  }catch(e){setOps('Incident test failed: '+e.message,'error');}
+}
+
+async function setLiveLock(action){
+  if(action==='unlock'&&!confirm('Unlock live mode for 30 minutes? This does not bypass other live safety gates.'))return;
+  setOps('Updating live mode lock...', 'warn');
+  try{
+    const r=await fetch('/api/live-lock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,minutes:30,reason:'Dashboard '+action})});
+    const d=await r.json();
+    setOps('Live lock: '+(d.unlocked?'UNLOCKED':'LOCKED')+'\nReason: '+(d.reason||'--')+'\nExpires: '+(d.expires_at||'--'), d.unlocked?'warn':'ok');
+    refreshAll();
+  }catch(e){setOps('Live lock update failed: '+e.message,'error');}
 }
 
 function renderPositions(positions){

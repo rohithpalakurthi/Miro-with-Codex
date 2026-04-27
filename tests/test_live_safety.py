@@ -49,6 +49,10 @@ class LiveSafetyTests(unittest.TestCase):
                 self.assertIn("Live execution requires manual override approval", status["reasons"])
 
                 promotion.set_manual_override("v15f", "live_approved", note="Reviewed for live", actor="test")
+                import tools.live_mode_lock as live_lock
+                old_lock = live_lock.LOCK_FILE
+                live_lock.LOCK_FILE = root / "live_mode_lock.json"
+                live_lock.unlock(actor="test", minutes=5, reason="unit test")
                 status = safety.evaluate_live_safety(
                     strategy="v15f",
                     mt5_account={"balance": 10000, "equity": 10000, "free_margin": 5000},
@@ -56,6 +60,7 @@ class LiveSafetyTests(unittest.TestCase):
                     requested_risk_pct=0.005,
                 )
                 self.assertTrue(status["allowed"])
+                live_lock.LOCK_FILE = old_lock
             finally:
                 promotion.PROMOTION_STATUS_PATH = old_status
                 promotion.PROMOTION_OVERRIDE_PATH = old_override

@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from backtesting.research.promotion import is_approved_for, resolve_promotion
 from core.state_schema import load_json, save_json
+from tools.live_mode_lock import status as live_lock_status
 
 
 CONFIG_PATH = Path("live_execution/live_safety_config.json")
@@ -58,6 +59,7 @@ def evaluate_live_safety(
     target = cfg["execution_target"]
     required_approval = _required_approval(target)
     promotion = resolve_promotion(strategy)
+    live_lock = live_lock_status()
     risk_state = load_json("agents/risk_manager/risk_state.json", {}) or {}
     cb_state = load_json("agents/master_trader/circuit_breaker_state.json", {}) or {}
     orchestrator = load_json("agents/orchestrator/last_decision.json", {}) or {}
@@ -75,6 +77,7 @@ def evaluate_live_safety(
     checks = {
         "promotion": (not cfg["require_promotion"]) or is_approved_for(required_approval, strategy),
         "manual_live_override": target != "live" or (not cfg["require_manual_live_approval"]) or promotion.get("resolved_by") == "manual_override",
+        "live_mode_lock": target != "live" or bool(live_lock.get("unlocked")),
         "mt5_account": (not cfg["require_mt5_account"]) or bool(account),
         "risk_manager": (not cfg["require_risk_approved"]) or bool(risk_state.get("approved", True)),
         "circuit_breaker": (not cfg["require_circuit_breaker_ok"]) or (str(cb_state.get("status", "OK")).upper() != "PAUSED" and not cb_state.get("daily_paused", False)),
@@ -88,6 +91,8 @@ def evaluate_live_safety(
         reasons.append("Promotion stage is below {} approval".format(required_approval))
     if not checks["manual_live_override"]:
         reasons.append("Live execution requires manual override approval")
+    if not checks["live_mode_lock"]:
+        reasons.append("Live mode lock is closed")
     if not checks["mt5_account"]:
         reasons.append("MT5 account state unavailable")
     if not checks["risk_manager"]:
@@ -112,6 +117,7 @@ def evaluate_live_safety(
         "promotion_approved_for": promotion.get("approved_for"),
         "config": cfg,
         "checks": checks,
+        "live_mode_lock": live_lock,
         "account": {
             "balance": account.get("balance"),
             "equity": account.get("equity"),

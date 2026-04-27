@@ -13,6 +13,7 @@ class OperationsPagesTests(unittest.TestCase):
             ("/scoreboard", "Paper Trading Scoreboard"),
             ("/strategy-lab", "Strategy Lab"),
             ("/risk-timeline", "Risk Event Timeline"),
+            ("/setup", "Setup Wizard"),
         ]:
             response = client.get(path)
             self.assertEqual(response.status_code, 200)
@@ -22,8 +23,8 @@ class OperationsPagesTests(unittest.TestCase):
         from agents.master_trader import miro_dashboard_server as server
 
         client = server.app.test_client()
-        required = ["Operations", "Scoreboard", "Strategy Lab", "Risk Timeline", "Pipeline", "Rules"]
-        for path in ["/", "/operations", "/scoreboard", "/strategy-lab", "/risk-timeline", "/pipeline", "/rules", "/legacy"]:
+        required = ["Operations", "Scoreboard", "Strategy Lab", "Risk Timeline", "Setup Wizard", "Pipeline", "Rules"]
+        for path in ["/", "/operations", "/scoreboard", "/strategy-lab", "/risk-timeline", "/setup", "/pipeline", "/rules", "/legacy"]:
             html = client.get(path).get_data(as_text=True)
             for label in required:
                 self.assertIn(label, html, "{} missing {}".format(path, label))
@@ -38,6 +39,7 @@ class OperationsPagesTests(unittest.TestCase):
             ("/api/ops/audit", "items"),
             ("/api/ops/timeline", "items"),
             ("/api/ops/config-snapshots", "items"),
+            ("/api/setup-wizard", "steps"),
         ]:
             response = client.get(path)
             self.assertEqual(response.status_code, 200)

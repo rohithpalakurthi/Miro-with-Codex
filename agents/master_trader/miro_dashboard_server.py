@@ -941,6 +941,24 @@ def api_strategy_lab():
     })
 
 
+@app.route("/api/setup-wizard", methods=["GET"])
+def api_setup_wizard():
+    health = run_health_check()
+    required = [c for c in health.get("checks", []) if c["name"].startswith("env ") or c["name"].startswith("port ") or c["name"].startswith("path ")]
+    return jsonify({
+        "status": health.get("status"),
+        "score": health.get("score"),
+        "steps": required,
+        "next_actions": health.get("next_actions", []),
+        "commands": [
+            ".\\setup.ps1",
+            ".\\run_dashboard.ps1",
+            ".\\agent_control.ps1 start",
+            ".\\health_check.ps1",
+        ],
+    })
+
+
 @app.route("/favicon.ico")
 def favicon():
     return Response(status=204)
@@ -2639,6 +2657,7 @@ button,input,select{font:inherit}
       <a href="/scoreboard">Scoreboard</a>
       <a href="/strategy-lab">Strategy Lab</a>
       <a href="/risk-timeline">Risk Timeline</a>
+      <a href="/setup">Setup Wizard</a>
       <a href="/pipeline">Pipeline Flow</a>
       <a href="/rules">Rules Control</a>
       <a href="/legacy">Legacy Dashboard</a>
@@ -3263,6 +3282,7 @@ html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-f
       <a href="/scoreboard">Scoreboard</a>
       <a href="/strategy-lab">Strategy Lab</a>
       <a href="/risk-timeline">Risk Timeline</a>
+      <a href="/setup">Setup Wizard</a>
       <a class="active" href="/rules">Rules Control</a>
       <a href="/legacy">Legacy Dashboard</a>
       <a href="/api/miro">API State</a>
@@ -3436,6 +3456,7 @@ body{background:linear-gradient(180deg,rgba(66,198,255,.08),transparent 260px),r
       <a href="/scoreboard">Scoreboard</a>
       <a href="/strategy-lab">Strategy Lab</a>
       <a href="/risk-timeline">Risk Timeline</a>
+      <a href="/setup">Setup Wizard</a>
       <a href="/rules">Rules Control</a>
       <a href="/legacy">Legacy Dashboard</a>
       <a href="/api/miro">API State</a>
@@ -3573,6 +3594,119 @@ RISK_TIMELINE_HTML = r"""<!DOCTYPE html><html><head><meta charset="UTF-8"><meta 
 async function load(){const d=await(await fetch('/api/ops/timeline?limit=80')).json();document.getElementById('items').innerHTML=(d.items||[]).map(e=>`<div class="event ${e.severity==='warn'?'warn':''}"><div class="meta">${(e.time||'').slice(0,19)} | ${e.source} | ${e.type}</div><div>${e.detail||''}</div></div>`).join('')||'No events yet.'}load();setInterval(load,5000)</script></body></html>"""
 
 
+SHARED_PAGE_CSS = """
+<style>
+:root{--bg:#0b0d10;--panel:#11161b;--panel2:#151b22;--line:#27313b;--line2:#344250;--text:#e9edf1;--muted:#8b98a6;--soft:#b5c0cc;--green:#2fd17c;--red:#f05252;--amber:#e6ad32;--cyan:#42c6ff;--mono:'IBM Plex Mono',monospace;--font:'IBM Plex Sans',sans-serif}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 80% 0,rgba(66,198,255,.08),transparent 360px),linear-gradient(180deg,rgba(47,209,124,.05),transparent 260px),var(--bg);color:var(--text);font-family:var(--font);font-size:13px}.shell{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:100vh}.side{border-right:1px solid var(--line);background:rgba(8,10,12,.92);padding:18px 14px;position:sticky;top:0;height:100vh}.brand{font-weight:700;letter-spacing:.08em;margin-bottom:4px}.brand-sub{color:var(--muted);font-size:11px;margin-bottom:18px}.nav{display:grid;gap:6px}.nav a{color:var(--soft);text-decoration:none;padding:9px 10px;border:1px solid transparent;border-radius:7px}.nav a.active,.nav a:hover{background:var(--panel2);border-color:var(--line);color:var(--text)}.main{padding:18px;min-width:0}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.eyebrow{color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase}.title{font-size:28px;font-weight:700;margin:2px 0}.subtitle{color:var(--muted);line-height:1.45;max-width:820px}.statusbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:14px 0}.status{background:rgba(17,22,27,.94);border:1px solid var(--line);border-radius:8px;padding:9px 10px}.label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.value{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{color:var(--muted);font-family:var(--mono);font-size:10px;margin-top:2px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{background:rgba(17,22,27,.95);border:1px solid var(--line);border-radius:10px;padding:14px}.card h3{margin:0 0 6px;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.desc{color:var(--muted);font-size:12px;line-height:1.5}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.btn{background:var(--panel2);border:1px solid var(--line2);color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer}.btn.good{color:#d7ffe7;border-color:rgba(47,209,124,.45)}.btn.danger{color:#ffd4d4;border-color:rgba(240,82,82,.45)}.log,.panel{background:#0d1115;border:1px solid var(--line);border-radius:8px;padding:11px;margin-top:12px}.log{white-space:pre-wrap;font-family:var(--mono);font-size:11px;max-height:300px;overflow:auto}.row{display:grid;grid-template-columns:170px 150px minmax(0,1fr);gap:9px;padding:9px;border-bottom:1px solid rgba(39,49,59,.72);font-family:var(--mono);font-size:11px}.pill{display:inline-flex;border:1px solid var(--line2);border-radius:999px;padding:3px 8px;font-family:var(--mono);font-size:11px}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}@media(max-width:1100px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto}.statusbar{grid-template-columns:repeat(2,1fr)}.grid,.grid4{grid-template-columns:1fr}.row{grid-template-columns:1fr}}@media(max-width:640px){.main{padding:12px}.title{font-size:22px}.statusbar{grid-template-columns:1fr}}
+</style>
+"""
+
+
+def _page_nav(active):
+    items = [
+        ("Command Center", "/"),
+        ("Operations", "/operations"),
+        ("Scoreboard", "/scoreboard"),
+        ("Strategy Lab", "/strategy-lab"),
+        ("Risk Timeline", "/risk-timeline"),
+        ("Setup Wizard", "/setup"),
+        ("Pipeline Flow", "/pipeline"),
+        ("Rules Control", "/rules"),
+        ("Legacy Dashboard", "/legacy"),
+    ]
+    return "".join('<a class="{}" href="{}">{}</a>'.format("active" if key == active else "", href, key) for key, href in items)
+
+
+def _shared_shell(active, title, subtitle, body, extra_script=""):
+    return """<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>MIRO - {title}</title><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">{css}</head><body><div class="shell"><aside class="side"><div class="brand">MIRO CONTROL</div><div class="brand-sub">Autonomous trading operations</div><nav class="nav">{nav}</nav></aside><main class="main"><div class="top"><div><div class="eyebrow">MiroTrade Framework</div><div class="title">{title}</div><div class="subtitle">{subtitle}</div></div><button class="btn" onclick="location.reload()">Refresh</button></div><div class="statusbar" id="statusbar"><div class="status"><div class="label">Loading</div><div class="value">--</div><div class="sub">status bar</div></div></div>{body}</main></div><script>{base_script}{extra_script}</script></body></html>""".format(
+        title=title,
+        subtitle=subtitle,
+        css=SHARED_PAGE_CSS,
+        nav=_page_nav(active),
+        body=body,
+        base_script=SHARED_STATUS_JS,
+        extra_script=extra_script,
+    )
+
+
+SHARED_STATUS_JS = """
+const esc=v=>String(v==null?'--':v).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const money=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:2});
+async function loadStatusBar(){
+  try{
+    const [health, agents, watchdog, liveLock, miro] = await Promise.all([
+      fetch('/api/system-health').then(r=>r.json()),
+      fetch('/api/agents/status').then(r=>r.json()),
+      fetch('/api/watchdog/status').then(r=>r.json()),
+      fetch('/api/live-lock').then(r=>r.json()),
+      fetch('/api/miro?t='+Date.now()).then(r=>r.json())
+    ]);
+    const mt5=(miro.mt5||{}), tele=health.checks?.find(c=>c.name==='env TELEGRAM_BOT_TOKEN');
+    const cells=[
+      ['Health', String(health.status||'--').toUpperCase(), 'score '+(health.score??'--'), health.status==='ok'?'green':health.status==='warn'?'amber':'red'],
+      ['Agents', agents.running?'RUNNING':'STOPPED', agents.pid?'pid '+agents.pid:'no pid', agents.running?'green':'amber'],
+      ['Watchdog', watchdog.running?'ON':'OFF', watchdog.pid?'pid '+watchdog.pid:'manual', watchdog.running?'green':'amber'],
+      ['MT5', mt5.connected?'CONNECTED':'OFFLINE', mt5.account?money(mt5.account.balance):'no account', mt5.connected?'green':'red'],
+      ['Telegram', tele&&tele.status==='ok'?'READY':'MISSING', tele?tele.detail:'unknown', tele&&tele.status==='ok'?'green':'amber'],
+      ['Live Lock', liveLock.unlocked?'UNLOCKED':'LOCKED', liveLock.expires_at?liveLock.expires_at.slice(11,19):'safe default', liveLock.unlocked?'amber':'green']
+    ];
+    document.getElementById('statusbar').innerHTML=cells.map(c=>`<div class="status"><div class="label">${c[0]}</div><div class="value ${c[3]}">${c[1]}</div><div class="sub">${esc(c[2])}</div></div>`).join('');
+  }catch(e){document.getElementById('statusbar').innerHTML='<div class="status"><div class="label">Status</div><div class="value red">OFFLINE</div><div class="sub">'+esc(e.message)+'</div></div>'}
+}
+loadStatusBar(); setInterval(loadStatusBar, 5000);
+"""
+
+
+def _operations_page():
+    body = """<div class="grid">
+<div class="card"><h3>Agent Runtime</h3><div class="desc">Control supervised launch.py process.</div><div class="actions"><button class="btn good" onclick="agents('start')">Start</button><button class="btn" onclick="agents('restart')">Restart</button><button class="btn danger" onclick="agents('stop')">Stop</button></div></div>
+<div class="card"><h3>Monitoring</h3><div class="desc">Health checks and watchdog auto-recovery.</div><div class="actions"><button class="btn" onclick="health()">Health</button><button class="btn good" onclick="watchdog('start')">Start Watchdog</button><button class="btn" onclick="watchdog('check')">Check</button><button class="btn danger" onclick="watchdog('stop')">Stop</button></div></div>
+<div class="card"><h3>Communication</h3><div class="desc">Verify Telegram and incident alerts.</div><div class="actions"><button class="btn good" onclick="post('/api/telegram-test')">Telegram</button><button class="btn good" onclick="post('/api/incident-test')">Incident</button></div></div>
+<div class="card"><h3>Safety Locks</h3><div class="desc">Live mode stays locked unless intentionally unlocked.</div><div class="actions"><button class="btn danger" onclick="live('lock')">Lock Live</button><button class="btn danger" onclick="live('unlock')">Unlock 30m</button></div></div>
+<div class="card"><h3>Config Backup</h3><div class="desc">Snapshot or restore rules/safety configs.</div><div class="actions"><button class="btn" onclick="snapshot()">Snapshot</button><button class="btn" onclick="loadSnapshots()">List/Restore</button></div></div>
+<div class="card"><h3>State Maintenance</h3><div class="desc">Back up and reset local paper/runtime state.</div><div class="actions"><button class="btn danger" onclick="reset(false)">Reset Paper</button><button class="btn danger" onclick="reset(true)">Clear Runtime</button></div></div>
+</div><div class="log" id="out">Ready.</div><div class="panel" id="snapshots"></div><div class="panel" id="audit"></div>"""
+    script = """
+const out=t=>document.getElementById('out').textContent=typeof t==='string'?t:JSON.stringify(t,null,2);
+async function post(url,body={}){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();out(d);loadAudit();return d}
+async function agents(action){if(action!=='start'&&!confirm(action+' agents?'))return post('/api/agents/control',{action})}
+async function watchdog(action){return post('/api/watchdog/control',{action})}
+async function health(){out(await(await fetch('/api/system-health')).json())}
+async function live(action){if(action==='unlock'&&!confirm('Unlock live mode for 30 minutes?'))return;return post('/api/live-lock',{action,minutes:30,reason:'Operations page '+action})}
+async function reset(include_runtime){if(!confirm(include_runtime?'Clear runtime and reset paper?':'Reset paper state?'))return post('/api/reset-state',{paper_balance:10000,include_runtime})}
+async function snapshot(){await post('/api/ops/config-snapshots',{label:'operations_page'});loadSnapshots()}
+async function restoreSnapshot(name){if(!confirm('Restore config snapshot '+name+'?'))return;await post('/api/ops/config-snapshots',{action:'restore',name});loadSnapshots()}
+async function loadSnapshots(){const d=await(await fetch('/api/ops/config-snapshots')).json();document.getElementById('snapshots').innerHTML='<h3>Config Snapshots</h3>'+((d.items||[]).map(s=>`<div class="row"><span>${esc((s.created_at||'').slice(0,19))}</span><span>${esc(s.name)}</span><span><button class="btn" onclick="restoreSnapshot('${esc(s.name)}')">Restore</button> ${(s.files||[]).length} files</span></div>`).join('')||'No snapshots yet.')}
+async function loadAudit(){const d=await(await fetch('/api/ops/audit?limit=20')).json();document.getElementById('audit').innerHTML='<h3>Action Audit</h3>'+((d.items||[]).map(x=>`<div class="row"><span>${esc((x.time||'').slice(0,19))}</span><span class="${x.ok?'green':'amber'}">${esc(x.action)}</span><span>${esc(x.result_summary||x.detail||'')}</span></div>`).join('')||'No actions yet.')}
+loadAudit();loadSnapshots();
+"""
+    return _shared_shell("Operations", "Operations Console", "Grouped controls, audit trail, and config backup/restore.", body, script)
+
+
+def _scoreboard_page():
+    body = """<div class="grid4" id="grid"></div>"""
+    script = """const fmt=v=>Number(v||0).toFixed(2);async function load(){const d=await(await fetch('/api/scoreboard')).json();const items=[['Balance','$'+fmt(d.balance)],['Realized P&L','$'+fmt(d.realized_pnl),d.realized_pnl>=0?'green':'red'],['Win Rate',fmt(d.win_rate)+'%'],['Profit Factor',fmt(d.profit_factor)],['Drawdown',fmt(d.drawdown_pct)+'%','amber'],['Trades',d.total_trades],['Average R',fmt(d.avg_r)],['Readiness',d.readiness_mode,d.ready?'green':'red'],['Blockers',d.blocker_count],['Warnings',d.warning_count],['Best Trade','$'+fmt(d.best_trade),'green'],['Worst Trade','$'+fmt(d.worst_trade),'red']];document.getElementById('grid').innerHTML=items.map(i=>`<div class="card"><div class="label">${i[0]}</div><div class="value ${i[2]||''}">${i[1]}</div></div>`).join('')}load();setInterval(load,5000);"""
+    return _shared_shell("Scoreboard", "Paper Trading Scoreboard", "Go-live readiness, paper performance, and trade quality metrics.", body, script)
+
+
+def _strategy_lab_page():
+    body = """<div id="summary" class="panel">Loading...</div><div class="panel"><h3>Strategy Comparison</h3><div id="chart" style="display:grid;gap:8px"></div></div><div id="rows" class="panel"></div>"""
+    script = """async function load(){const d=await(await fetch('/api/strategy-lab')).json();document.getElementById('summary').innerHTML=`Promotion: <b>${esc((d.promotion.status||'candidate').toUpperCase())}</b> / ${esc(d.promotion.approved_for||'research_only')}<br>Lifecycle: <b>${esc((d.lifecycle.stage||'no report').toUpperCase())}</b><br>Experiments: ${d.experiments.total_experiments||0}`;const recent=d.recent||[];document.getElementById('chart').innerHTML=recent.slice(-8).reverse().map(e=>{const r=e.results||{}, pf=Number(r.best_profit_factor||r.profit_factor||0), wr=Number(r.best_win_rate||r.win_rate||0);return `<div><div class="label">${esc(e.experiment_type||'experiment')} ${esc(e.id||'')}</div><div style="height:9px;background:#0b0d10;border:1px solid #27313b;border-radius:99px;overflow:hidden"><span style="display:block;height:100%;width:${Math.min(100,wr)}%;background:#2fd17c"></span></div><div class="sub">WR ${wr||'--'} | PF ${pf||'--'}</div></div>`}).join('')||'No experiments found.';document.getElementById('rows').innerHTML='<h3>Recent Experiments</h3>'+(recent.length?recent.slice().reverse().map(e=>{const r=e.results||{};return `<div class="row"><span>${esc(e.id||'experiment')}</span><span><span class="pill">${esc(e.experiment_type||'test')}</span></span><span>WR ${esc(r.best_win_rate||r.win_rate||'--')} | PF ${esc(r.best_profit_factor||r.profit_factor||'--')} | Applied ${r.applied?'YES':'NO'}</span></div>`}).join(''):'No experiments found.')}load();"""
+    return _shared_shell("Strategy Lab", "Strategy Lab", "Research candidates, promotion state, comparison bars, and experiment history.", body, script)
+
+
+def _risk_timeline_page():
+    body = """<div id="items">Loading...</div>"""
+    script = """async function load(){const d=await(await fetch('/api/ops/timeline?limit=80')).json();document.getElementById('items').innerHTML=(d.items||[]).map(e=>`<div class="card" style="border-left:4px solid ${e.severity==='warn'?'#e6ad32':'#42c6ff'};margin-bottom:9px"><div class="sub">${esc((e.time||'').slice(0,19))} | ${esc(e.source)} | ${esc(e.type)}</div><div>${esc(e.detail||'')}</div></div>`).join('')||'<div class="panel">No events yet.</div>'}load();setInterval(load,5000);"""
+    return _shared_shell("Risk Timeline", "Risk Event Timeline", "Pauses, lock changes, watchdog actions, health warnings, and operator actions.", body, script)
+
+
+def _setup_page():
+    body = """<div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Setup Checklist</h3><div id="steps">Loading...</div></div>"""
+    script = """async function load(){const d=await(await fetch('/api/setup-wizard')).json();document.getElementById('commands').innerHTML=(d.commands||[]).map(c=>`<div class="row"><span>PowerShell</span><span>Command</span><span>${esc(c)}</span></div>`).join('');document.getElementById('steps').innerHTML=(d.steps||[]).map(s=>`<div class="row"><span class="${s.status==='ok'?'green':s.status==='warn'?'amber':'red'}">${esc(s.status)}</span><span>${esc(s.name)}</span><span>${esc(s.detail)} - ${esc(s.impact)}</span></div>`).join('')}load();"""
+    return _shared_shell("Setup Wizard", "Setup Wizard", "Guided environment, MT5, Telegram, ports, and first-run checks.", body, script)
+
+
 @app.route("/")
 @app.route("/miro")
 def dashboard():
@@ -3586,22 +3720,27 @@ def pipeline_dashboard():
 
 @app.route("/operations")
 def operations_dashboard():
-    return OPS_PAGE_HTML
+    return _operations_page()
 
 
 @app.route("/scoreboard")
 def scoreboard_dashboard():
-    return SCOREBOARD_HTML
+    return _scoreboard_page()
 
 
 @app.route("/strategy-lab")
 def strategy_lab_dashboard():
-    return STRATEGY_LAB_HTML
+    return _strategy_lab_page()
 
 
 @app.route("/risk-timeline")
 def risk_timeline_dashboard():
-    return RISK_TIMELINE_HTML
+    return _risk_timeline_page()
+
+
+@app.route("/setup")
+def setup_dashboard():
+    return _setup_page()
 
 
 @app.route("/rules")
@@ -3618,6 +3757,7 @@ def legacy_dashboard():
       <a style="color:#b5c0cc;text-decoration:none" href="/scoreboard">Scoreboard</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/strategy-lab">Strategy Lab</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/risk-timeline">Risk Timeline</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/setup">Setup Wizard</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/pipeline">Pipeline</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/rules">Rules</a>
       <span style="color:#e9edf1">Legacy</span>

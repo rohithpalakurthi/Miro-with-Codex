@@ -3241,7 +3241,7 @@ def legacy_dashboard():
 
 
 def run():
-    print("[Dashboard] MIRO Unified Dashboard → http://localhost:5055")
+    print("[Dashboard] MIRO Unified Dashboard -> http://localhost:5055")
     app.run(host="0.0.0.0", port=5055, debug=False, use_reloader=False)
 
 

@@ -52,8 +52,10 @@ from tools.ops_db import (
     metric_history,
     recent_audit_events,
     recent_promotion_events,
+    recent_trade_decisions,
     record_metric_snapshot,
     record_promotion_event,
+    record_trade_decision,
 )
 from tools.watchdog import check_once as watchdog_check_once
 
@@ -923,6 +925,243 @@ def api_config_snapshots():
 @app.route("/api/ops/timeline", methods=["GET"])
 def api_ops_timeline():
     return jsonify({"items": risk_timeline(int(request.args.get("limit", 80)))})
+
+
+def _promotion_funnel_payload():
+    lifecycle = _load_strategy_lifecycle()
+    stages = lifecycle.get("stage_counts", {}) if isinstance(lifecycle, dict) else {}
+    ordered = [
+        "discovered",
+        "paper_candidate",
+        "paper_active",
+        "paper_approved",
+        "demo_approved",
+        "live_approved",
+        "demoted",
+        "quarantined",
+    ]
+    return {
+        "stages": [{"name": stage, "count": int(stages.get(stage, 0) or 0)} for stage in ordered],
+        "active": lifecycle.get("active", []) if isinstance(lifecycle, dict) else [],
+        "gates": lifecycle.get("paper_gates", {}) if isinstance(lifecycle, dict) else {},
+        "promotion": resolve_promotion("v15f"),
+    }
+
+
+def _risk_cockpit_payload():
+    mt5_state = _get_mt5_state()
+    paper = _load("paper_state") or {}
+    safety = evaluate_live_safety(
+        mt5_account=mt5_state.get("account", {}),
+        open_positions=mt5_state.get("positions", []),
+    )
+    positions = mt5_state.get("positions", []) or []
+    exposure = round(sum(abs(float(pos.get("volume", 0) or 0)) for pos in positions), 4)
+    return {
+        "live_lock": live_mode_lock_status(),
+        "live_safety": safety,
+        "mt5": mt5_state,
+        "paper_account": paper.get("account", {}),
+        "paper_metrics": paper.get("metrics", {}),
+        "exposure_lots": exposure,
+        "open_positions": len(positions),
+        "risk_state": _load("risk_state"),
+        "circuit_breaker": _load("circuit_breaker"),
+        "news_sentinel": _load("news_sentinel"),
+    }
+
+
+def _mt5_reconcile_payload():
+    mt5_state = _get_mt5_state()
+    paper = _load("paper_state") or {}
+    paper_account = paper.get("account", {})
+    mt5_account = mt5_state.get("account", {})
+    paper_balance = float(paper_account.get("balance", paper.get("balance", 0)) or 0)
+    mt5_balance = float(mt5_account.get("balance", 0) or 0)
+    balance_gap = round(mt5_balance - paper_balance, 2) if mt5_state.get("connected") else None
+    return {
+        "status": "connected" if mt5_state.get("connected") else "offline",
+        "checks": [
+            {"name": "MT5 connected", "ok": bool(mt5_state.get("connected")), "detail": mt5_state.get("error", "ready")},
+            {"name": "MT5 account visible", "ok": bool(mt5_account), "detail": str(mt5_account.get("login", "no account"))},
+            {"name": "Open positions synced", "ok": isinstance(mt5_state.get("positions"), list), "detail": "{} positions".format(len(mt5_state.get("positions", []) or []))},
+            {"name": "Paper/MT5 balance gap", "ok": balance_gap is None or abs(balance_gap) < 1000000, "detail": "gap={}".format(balance_gap)},
+        ],
+        "paper_account": paper_account,
+        "mt5_account": mt5_account,
+        "balance_gap": balance_gap,
+        "positions": mt5_state.get("positions", []),
+    }
+
+
+def _agent_memory_payload():
+    docs = [
+        ("Agent Handoff", "docs/AGENT_HANDOFF.md"),
+        ("Project Map", "docs/PROJECT_MAP.md"),
+        ("Operations", "docs/OPERATIONS.md"),
+        ("Research Pipeline", "docs/RESEARCH_PIPELINE.md"),
+        ("Roadmap", "docs/ROADMAP.md"),
+        ("Setup", "SETUP_AND_RUN.md"),
+    ]
+    items = []
+    for title, rel in docs:
+        try:
+            with open(rel, "r", encoding="utf-8") as handle:
+                text = handle.read()
+        except OSError:
+            text = ""
+        items.append({
+            "title": title,
+            "path": rel,
+            "exists": bool(text),
+            "preview": " ".join(text.split()[:55]) if text else "Missing or not generated yet.",
+        })
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "current_branch": "main",
+        "repo": "rohithpalakurthi/Miro-with-Codex",
+        "handoff_docs": items,
+        "commands": [".\\run_dashboard.ps1", ".\\agent_control.ps1 start", ".\\health_check.ps1", "python -m unittest discover tests"],
+        "safety_notes": [
+            "Autonomous strategy discovery is allowed for research and paper trading.",
+            "Live trading remains gated by live lock, MT5 readiness, risk checks, and supervised promotion.",
+            "No system can guarantee profits; use paper/demo evidence before live exposure.",
+        ],
+    }
+
+
+def _recovery_status_payload():
+    health = run_health_check()
+    agents = agents_process_status()
+    watchdog = watchdog_status()
+    checks = health.get("checks", [])
+    failing = [check for check in checks if check.get("status") not in {"ok", "pass"}]
+    return {
+        "status": "ok" if agents.get("running") and watchdog.get("running") and not failing else "needs_attention",
+        "agents": agents,
+        "watchdog": watchdog,
+        "failing_checks": failing[:12],
+        "recommended_actions": health.get("next_actions", []),
+        "auto_recovery": [
+            {"condition": "agents stopped", "action": "Start or restart agents from Operations"},
+            {"condition": "watchdog stopped", "action": "Start watchdog to monitor setup health"},
+            {"condition": "MT5 offline", "action": "Open MT5 terminal and rerun health check"},
+            {"condition": "Telegram missing", "action": "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in .env"},
+        ],
+    }
+
+
+def _simulation_lab_payload():
+    reports_dir = "backtesting/reports"
+    reports = []
+    if os.path.isdir(reports_dir):
+        names = sorted([name for name in os.listdir(reports_dir) if name.endswith((".json", ".csv", ".html"))], reverse=True)
+        for name in names[:25]:
+            path = os.path.join(reports_dir, name)
+            reports.append({"name": name, "path": path, "size": os.path.getsize(path), "updated_at": datetime.fromtimestamp(os.path.getmtime(path), timezone.utc).isoformat()})
+    return {
+        "status": "ready",
+        "modes": ["backtest", "walk_forward", "paper_replay", "stress_scenario"],
+        "last_reports": reports,
+        "commands": [
+            "python backtesting/research/strategy_research.py",
+            "python backtesting/research/run_walk_forward.py",
+            "python backtesting/research/lifecycle_manager.py",
+            "python backtesting/research/refresh_promotion_status.py",
+        ],
+        "guardrail": "Simulation lab does not place live orders; it produces evidence for promotion review.",
+    }
+
+
+@app.route("/api/realtime/stream", methods=["GET"])
+def api_realtime_stream():
+    def stream():
+        for _ in range(6):
+            payload = {
+                "time": datetime.now(timezone.utc).isoformat(),
+                "scoreboard": _scoreboard_payload(),
+                "risk": _risk_cockpit_payload(),
+                "promotion": _promotion_funnel_payload(),
+                "recovery": _recovery_status_payload(),
+            }
+            yield "event: miro\ndata: {}\n\n".format(json.dumps(payload, default=str))
+            time.sleep(5)
+    return Response(stream(), mimetype="text/event-stream")
+
+
+@app.route("/api/trade-journal", methods=["GET", "POST"])
+def api_trade_journal():
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        decision = record_trade_decision(
+            symbol=str(payload.get("symbol", "XAUUSD")),
+            strategy=str(payload.get("strategy", "manual")),
+            decision=str(payload.get("decision", "HOLD")).upper(),
+            confidence=float(payload["confidence"]) if payload.get("confidence") is not None else None,
+            entry=float(payload["entry"]) if payload.get("entry") is not None else None,
+            stop_loss=float(payload["stop_loss"]) if payload.get("stop_loss") is not None else None,
+            take_profit=float(payload["take_profit"]) if payload.get("take_profit") is not None else None,
+            risk=payload.get("risk") or {},
+            context=payload.get("context") or {},
+            outcome=payload.get("outcome") or {},
+            status=str(payload.get("status", "observed")),
+        )
+        audit("trade_decision_recorded", decision, detail=decision.get("decision", ""))
+        return jsonify({"ok": True, "decision": decision})
+    return jsonify({"items": recent_trade_decisions(int(request.args.get("limit", 100))), "inferred": _infer_trade_journal()})
+
+
+@app.route("/api/promotion/funnel", methods=["GET"])
+def api_promotion_funnel():
+    return jsonify(_promotion_funnel_payload())
+
+
+@app.route("/api/risk-cockpit", methods=["GET"])
+def api_risk_cockpit():
+    return jsonify(_risk_cockpit_payload())
+
+
+@app.route("/api/mt5/reconcile", methods=["GET"])
+def api_mt5_reconcile():
+    return jsonify(_mt5_reconcile_payload())
+
+
+@app.route("/api/agent-memory", methods=["GET"])
+def api_agent_memory():
+    return jsonify(_agent_memory_payload())
+
+
+@app.route("/api/recovery/status", methods=["GET"])
+def api_recovery_status():
+    return jsonify(_recovery_status_payload())
+
+
+@app.route("/api/simulation-lab", methods=["GET", "POST"])
+def api_simulation_lab():
+    if request.method == "POST":
+        mode = str((request.get_json(silent=True) or {}).get("mode", "dry_run"))
+        result = {"ok": True, "mode": mode, "message": "Simulation request logged. Run the listed command for heavy execution.", "lab": _simulation_lab_payload()}
+        audit("simulation_{}".format(mode), result)
+        return jsonify(result)
+    return jsonify(_simulation_lab_payload())
+
+
+def _infer_trade_journal():
+    paper = _load("paper_state") or {}
+    closed = paper.get("closed_trades") or (paper.get("trades", {}) or {}).get("closed", [])
+    inferred = []
+    for trade in list(closed)[-12:]:
+        if not isinstance(trade, dict):
+            continue
+        inferred.append({
+            "created_at": trade.get("closed_at") or trade.get("time") or trade.get("timestamp"),
+            "symbol": trade.get("symbol", "XAUUSD"),
+            "strategy": trade.get("strategy", "paper"),
+            "decision": trade.get("direction", trade.get("side", "CLOSED")),
+            "outcome": {"pnl": trade.get("pnl"), "r_multiple": trade.get("r_multiple")},
+            "status": "inferred_from_paper_trade",
+        })
+    return list(reversed(inferred))
 
 
 def _scoreboard_payload():
@@ -2691,9 +2930,14 @@ button,input,select{font:inherit}
     </div>
     <nav class="nav">
       <a class="active" href="/">Command Center</a>
+      <a href="/autonomy-suite">Autonomy Suite</a>
+      <a href="/risk-cockpit">Risk Cockpit</a>
+      <a href="/trade-journal">Trade Journal</a>
       <a href="/operations">Operations</a>
       <a href="/scoreboard">Scoreboard</a>
       <a href="/strategy-lab">Strategy Lab</a>
+      <a href="/simulation-lab">Simulation Lab</a>
+      <a href="/agent-memory">Agent Memory</a>
       <a href="/risk-timeline">Risk Timeline</a>
       <a href="/setup">Setup Wizard</a>
       <a href="/pipeline">Pipeline Flow</a>
@@ -3315,10 +3559,15 @@ html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-f
     <div class="brand"><div class="mark">M</div><div><h1>MIRO CONTROL</h1><p>Autonomous trading operations</p></div></div>
     <nav class="nav">
       <a href="/">Command Center</a>
+      <a href="/autonomy-suite">Autonomy Suite</a>
+      <a href="/risk-cockpit">Risk Cockpit</a>
+      <a href="/trade-journal">Trade Journal</a>
       <a href="/pipeline">Pipeline Flow</a>
       <a href="/operations">Operations</a>
       <a href="/scoreboard">Scoreboard</a>
       <a href="/strategy-lab">Strategy Lab</a>
+      <a href="/simulation-lab">Simulation Lab</a>
+      <a href="/agent-memory">Agent Memory</a>
       <a href="/risk-timeline">Risk Timeline</a>
       <a href="/setup">Setup Wizard</a>
       <a class="active" href="/rules">Rules Control</a>
@@ -3489,10 +3738,15 @@ body{background:linear-gradient(180deg,rgba(66,198,255,.08),transparent 260px),r
     <div class="brand"><div class="mark">M</div><div><h1>MIRO CONTROL</h1><p>Autonomous trading operations</p></div></div>
     <nav class="nav">
       <a href="/">Command Center</a>
+      <a href="/autonomy-suite">Autonomy Suite</a>
+      <a href="/risk-cockpit">Risk Cockpit</a>
+      <a href="/trade-journal">Trade Journal</a>
       <a class="active" href="/pipeline">Pipeline Flow</a>
       <a href="/operations">Operations</a>
       <a href="/scoreboard">Scoreboard</a>
       <a href="/strategy-lab">Strategy Lab</a>
+      <a href="/simulation-lab">Simulation Lab</a>
+      <a href="/agent-memory">Agent Memory</a>
       <a href="/risk-timeline">Risk Timeline</a>
       <a href="/setup">Setup Wizard</a>
       <a href="/rules">Rules Control</a>
@@ -3635,7 +3889,7 @@ async function load(){const d=await(await fetch('/api/ops/timeline?limit=80')).j
 SHARED_PAGE_CSS = """
 <style>
 :root{--bg:#0b0d10;--panel:#11161b;--panel2:#151b22;--line:#27313b;--line2:#344250;--text:#e9edf1;--muted:#8b98a6;--soft:#b5c0cc;--green:#2fd17c;--red:#f05252;--amber:#e6ad32;--cyan:#42c6ff;--mono:'IBM Plex Mono',monospace;--font:'IBM Plex Sans',sans-serif}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 80% 0,rgba(66,198,255,.08),transparent 360px),linear-gradient(180deg,rgba(47,209,124,.05),transparent 260px),var(--bg);color:var(--text);font-family:var(--font);font-size:13px}.shell{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:100vh}.side{border-right:1px solid var(--line);background:rgba(8,10,12,.92);padding:18px 14px;position:sticky;top:0;height:100vh}.brand{font-weight:700;letter-spacing:.08em;margin-bottom:4px}.brand-sub{color:var(--muted);font-size:11px;margin-bottom:18px}.nav{display:grid;gap:6px}.nav a{color:var(--soft);text-decoration:none;padding:9px 10px;border:1px solid transparent;border-radius:7px}.nav a.active,.nav a:hover{background:var(--panel2);border-color:var(--line);color:var(--text)}.main{padding:18px;min-width:0}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.eyebrow{color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase}.title{font-size:28px;font-weight:700;margin:2px 0}.subtitle{color:var(--muted);line-height:1.45;max-width:820px}.statusbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:14px 0}.status{background:rgba(17,22,27,.94);border:1px solid var(--line);border-radius:8px;padding:9px 10px}.label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.value{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{color:var(--muted);font-family:var(--mono);font-size:10px;margin-top:2px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{background:rgba(17,22,27,.95);border:1px solid var(--line);border-radius:10px;padding:14px}.card h3{margin:0 0 6px;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.desc{color:var(--muted);font-size:12px;line-height:1.5}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.btn{background:var(--panel2);border:1px solid var(--line2);color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer}.btn.good{color:#d7ffe7;border-color:rgba(47,209,124,.45)}.btn.danger{color:#ffd4d4;border-color:rgba(240,82,82,.45)}.log,.panel{background:#0d1115;border:1px solid var(--line);border-radius:8px;padding:11px;margin-top:12px}.log{white-space:pre-wrap;font-family:var(--mono);font-size:11px;max-height:300px;overflow:auto}.row{display:grid;grid-template-columns:170px 150px minmax(0,1fr);gap:9px;padding:9px;border-bottom:1px solid rgba(39,49,59,.72);font-family:var(--mono);font-size:11px}.pill{display:inline-flex;border:1px solid var(--line2);border-radius:999px;padding:3px 8px;font-family:var(--mono);font-size:11px}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}@media(max-width:1100px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto}.statusbar{grid-template-columns:repeat(2,1fr)}.grid,.grid4{grid-template-columns:1fr}.row{grid-template-columns:1fr}}@media(max-width:640px){.main{padding:12px}.title{font-size:22px}.statusbar{grid-template-columns:1fr}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 80% 0,rgba(66,198,255,.08),transparent 360px),linear-gradient(180deg,rgba(47,209,124,.05),transparent 260px),var(--bg);color:var(--text);font-family:var(--font);font-size:13px}.shell{display:grid;grid-template-columns:230px minmax(0,1fr);min-height:100vh}.side{border-right:1px solid var(--line);background:rgba(8,10,12,.92);padding:18px 14px;position:sticky;top:0;height:100vh;overflow:auto}.brand{font-weight:700;letter-spacing:.08em;margin-bottom:4px}.brand-sub{color:var(--muted);font-size:11px;margin-bottom:18px}.nav{display:grid;gap:6px}.nav a{color:var(--soft);text-decoration:none;padding:9px 10px;border:1px solid transparent;border-radius:7px}.nav a.active,.nav a:hover{background:var(--panel2);border-color:var(--line);color:var(--text)}.main{padding:18px;min-width:0}.top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}.eyebrow{color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase}.title{font-size:28px;font-weight:700;margin:2px 0}.subtitle{color:var(--muted);line-height:1.45;max-width:820px}.statusbar{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:14px 0}.status{background:rgba(17,22,27,.94);border:1px solid var(--line);border-radius:8px;padding:9px 10px}.label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.08em}.value{font-size:18px;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{color:var(--muted);font-family:var(--mono);font-size:10px;margin-top:2px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.card{background:rgba(17,22,27,.95);border:1px solid var(--line);border-radius:10px;padding:14px}.card h3{margin:0 0 6px;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.desc{color:var(--muted);font-size:12px;line-height:1.5}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.btn{background:var(--panel2);border:1px solid var(--line2);color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer}.btn.good{color:#d7ffe7;border-color:rgba(47,209,124,.45)}.btn.danger{color:#ffd4d4;border-color:rgba(240,82,82,.45)}.log,.panel{background:#0d1115;border:1px solid var(--line);border-radius:8px;padding:11px;margin-top:12px}.log{white-space:pre-wrap;font-family:var(--mono);font-size:11px;max-height:300px;overflow:auto}.row{display:grid;grid-template-columns:170px 150px minmax(0,1fr);gap:9px;padding:9px;border-bottom:1px solid rgba(39,49,59,.72);font-family:var(--mono);font-size:11px}.pill{display:inline-flex;border:1px solid var(--line2);border-radius:999px;padding:3px 8px;font-family:var(--mono);font-size:11px}.graphy{height:190px;border:1px solid var(--line);border-radius:10px;background:linear-gradient(180deg,rgba(66,198,255,.06),rgba(47,209,124,.03));padding:12px}.barline{height:10px;background:#080a0c;border:1px solid var(--line);border-radius:999px;overflow:hidden}.barline span{display:block;height:100%;background:linear-gradient(90deg,var(--green),var(--cyan))}.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}@media(max-width:1100px){.shell{grid-template-columns:1fr}.side{position:relative;height:auto}.statusbar{grid-template-columns:repeat(2,1fr)}.grid,.grid4{grid-template-columns:1fr}.row{grid-template-columns:1fr}}@media(max-width:640px){.main{padding:12px}.title{font-size:22px}.statusbar{grid-template-columns:1fr}}
 </style>
 """
 
@@ -3643,9 +3897,14 @@ SHARED_PAGE_CSS = """
 def _page_nav(active):
     items = [
         ("Command Center", "/"),
+        ("Autonomy Suite", "/autonomy-suite"),
+        ("Risk Cockpit", "/risk-cockpit"),
+        ("Trade Journal", "/trade-journal"),
         ("Operations", "/operations"),
         ("Scoreboard", "/scoreboard"),
         ("Strategy Lab", "/strategy-lab"),
+        ("Simulation Lab", "/simulation-lab"),
+        ("Agent Memory", "/agent-memory"),
         ("Risk Timeline", "/risk-timeline"),
         ("Setup Wizard", "/setup"),
         ("Pipeline Flow", "/pipeline"),
@@ -3749,6 +4008,41 @@ def _setup_page():
     return _shared_shell("Setup Wizard", "Setup Wizard", "Guided environment, MT5, Telegram, ports, and first-run checks.", body, script)
 
 
+def _autonomy_suite_page():
+    body = """<div class="grid4" id="cards"></div><div class="panel"><h3>Graphy Live Balance/P&L</h3><div class="graphy"><canvas id="metricChart"></canvas><div id="chartFallback"></div></div></div><div class="grid"><div class="panel"><h3>Promotion Funnel</h3><div id="funnel"></div></div><div class="panel"><h3>Recovery Center</h3><div id="recovery"></div></div><div class="panel"><h3>MT5 Reconciliation</h3><div id="reconcile"></div></div></div><div class="panel"><h3>Real-Time Stream</h3><div class="desc">SSE stream is enabled at /api/realtime/stream. This panel shows the latest event heartbeat.</div><div id="stream" class="log">Connecting...</div></div>"""
+    script = """
+function pct(n){return Math.max(4,Math.min(100,Number(n||0)))}
+async function loadSuite(){const [risk,funnel,recovery,reconcile,hist]=await Promise.all([fetch('/api/risk-cockpit').then(r=>r.json()),fetch('/api/promotion/funnel').then(r=>r.json()),fetch('/api/recovery/status').then(r=>r.json()),fetch('/api/mt5/reconcile').then(r=>r.json()),fetch('/api/ops/metrics/history?metric=balance&limit=20').then(r=>r.json())]);const cards=[['Real-Time Engine','SSE enabled','/api/realtime/stream','green'],['Decision Journal','Persistent decisions','/trade-journal','green'],['Promotion Pipeline',(funnel.promotion?.approved_for||'research_only').toUpperCase(),'/strategy-lab','amber'],['Risk Cockpit',risk.live_safety?.allowed?'ALLOWED':'BLOCKED','/risk-cockpit',risk.live_safety?.allowed?'green':'red'],['MT5 Reconciliation',reconcile.status.toUpperCase(),'/api/mt5/reconcile',reconcile.status==='connected'?'green':'amber'],['Agent Memory','Handoff ready','/agent-memory','green'],['Failure Recovery',recovery.status.toUpperCase(),'/api/recovery/status',recovery.status==='ok'?'green':'amber'],['Simulation Lab','Evidence first','/simulation-lab','green']];document.getElementById('cards').innerHTML=cards.map(c=>`<div class="card"><h3>${esc(c[0])}</h3><div class="value ${c[3]}">${esc(c[1])}</div><div class="sub">${esc(c[2])}</div></div>`).join('');document.getElementById('funnel').innerHTML=(funnel.stages||[]).map(s=>`<div class="row"><span>${esc(s.name)}</span><span>${esc(s.count)}</span><span><div class="barline"><span style="width:${pct(s.count*18)}%"></span></div></span></div>`).join('');document.getElementById('recovery').innerHTML=(recovery.failing_checks||[]).slice(0,6).map(x=>`<div class="row"><span class="amber">${esc(x.status)}</span><span>${esc(x.name)}</span><span>${esc(x.detail)}</span></div>`).join('')||'<div class="green">All critical recovery checks look clean.</div>';document.getElementById('reconcile').innerHTML=(reconcile.checks||[]).map(x=>`<div class="row"><span class="${x.ok?'green':'amber'}">${x.ok?'OK':'CHECK'}</span><span>${esc(x.name)}</span><span>${esc(x.detail)}</span></div>`).join('');drawMetricChart((hist.items||[]).slice().reverse())}
+function drawMetricChart(items){const labels=items.map(x=>(x.created_at||'').slice(11,19)), data=items.map(x=>Number(x.value||0));if(window.Chart){const ctx=document.getElementById('metricChart');if(window.metricChart)window.metricChart.destroy();window.metricChart=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'Balance',data,borderColor:'#2fd17c',backgroundColor:'rgba(47,209,124,.12)',tension:.35,fill:true}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#b5c0cc'}}},scales:{x:{ticks:{color:'#8b98a6'}},y:{ticks:{color:'#8b98a6'}}}});return}document.getElementById('chartFallback').innerHTML=data.map(v=>`<div class="barline" style="margin:6px 0"><span style="width:${pct(v/100)}%"></span></div>`).join('')}
+const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js';s.onload=loadSuite;document.head.appendChild(s);loadSuite();setInterval(loadSuite,7000);try{const es=new EventSource('/api/realtime/stream');es.addEventListener('miro',e=>{document.getElementById('stream').textContent=e.data.slice(0,1200)});es.onerror=()=>{document.getElementById('stream').textContent='Stream disconnected; polling fallback remains active.'}}catch(e){document.getElementById('stream').textContent='EventSource unavailable: '+e.message}
+"""
+    return _shared_shell("Autonomy Suite", "Autonomy Suite", "Eight autonomous operations features in one control-room view, using the project graph/chart pattern with offline fallbacks.", body, script)
+
+
+def _risk_cockpit_page():
+    body = """<div class="grid4" id="metrics"></div><div class="panel"><h3>Risk Checks</h3><div id="checks"></div></div><div class="panel"><h3>Open Positions</h3><div id="positions"></div></div>"""
+    script = """async function load(){const d=await(await fetch('/api/risk-cockpit')).json();const m=[['Live Lock',d.live_lock?.unlocked?'UNLOCKED':'LOCKED',d.live_lock?.unlocked?'amber':'green'],['Live Safety',d.live_safety?.allowed?'ALLOWED':'BLOCKED',d.live_safety?.allowed?'green':'red'],['Exposure Lots',d.exposure_lots||0,'amber'],['Open Positions',d.open_positions||0,'']];document.getElementById('metrics').innerHTML=m.map(x=>`<div class="card"><div class="label">${x[0]}</div><div class="value ${x[2]}">${esc(x[1])}</div></div>`).join('');const checks=Object.entries(d.live_safety?.checks||{}).map(([name,ok])=>({name,ok,detail:ok?'passed':'blocked'}));document.getElementById('checks').innerHTML=(checks.length?checks:(d.live_safety?.reasons||[]).map(x=>({name:'reason',ok:false,detail:x}))).map(x=>`<div class="row"><span>${esc(x.name)}</span><span class="${x.ok?'green':'amber'}">${x.ok?'OK':'BLOCK'}</span><span>${esc(x.detail)}</span></div>`).join('')||'<div class="amber">No detailed safety checks available.</div>';document.getElementById('positions').innerHTML=(d.mt5?.positions||[]).map(p=>`<div class="row"><span>${esc(p.symbol)}</span><span>${esc(p.type)} ${esc(p.volume)}</span><span>profit ${esc(p.profit)} @ ${esc(p.price_open)}</span></div>`).join('')||'No MT5 positions detected.'}load();setInterval(load,5000);"""
+    return _shared_shell("Risk Cockpit", "Risk Cockpit", "Exposure, live safety, locks, drawdown, news, and position risk in one place.", body, script)
+
+
+def _trade_journal_page():
+    body = """<div class="grid"><div class="card"><h3>Decision Journal</h3><div class="desc">Every signal/decision should record context, risk, entry, SL/TP, and outcome. Use API POST /api/trade-journal for agents.</div></div><div class="card"><h3>Example Payload</h3><div class="sub">{symbol, strategy, decision, confidence, entry, stop_loss, take_profit, risk, context}</div></div><div class="card"><h3>Status</h3><div class="value green">ENABLED</div></div></div><div class="panel"><h3>Recorded Decisions</h3><div id="items"></div></div><div class="panel"><h3>Inferred From Paper Trades</h3><div id="inferred"></div></div>"""
+    script = """async function load(){const d=await(await fetch('/api/trade-journal?limit=80')).json();document.getElementById('items').innerHTML=(d.items||[]).map(x=>`<div class="row"><span>${esc((x.created_at||'').slice(0,19))}</span><span>${esc(x.symbol)} ${esc(x.decision)}</span><span>${esc(x.strategy)} confidence ${esc(x.confidence)} status ${esc(x.status)}</span></div>`).join('')||'No recorded agent decisions yet.';document.getElementById('inferred').innerHTML=(d.inferred||[]).map(x=>`<div class="row"><span>${esc((x.created_at||'').slice(0,19))}</span><span>${esc(x.symbol)} ${esc(x.decision)}</span><span>${esc(x.strategy)} pnl ${esc(x.outcome?.pnl)}</span></div>`).join('')||'No paper trade decisions inferred yet.'}load();setInterval(load,7000);"""
+    return _shared_shell("Trade Journal", "Trade Decision Journal", "Persistent audit trail for signals, reasoning, risk checks, and outcomes.", body, script)
+
+
+def _simulation_lab_page():
+    body = """<div class="grid4" id="modes"></div><div class="panel"><h3>Run Controls</h3><div class="actions"><button class="btn" onclick="run('backtest')">Log Backtest Request</button><button class="btn" onclick="run('walk_forward')">Log Walk-Forward Request</button><button class="btn" onclick="run('paper_replay')">Log Paper Replay Request</button><button class="btn danger" onclick="run('stress_scenario')">Log Stress Scenario</button></div><div id="out" class="log">Ready.</div></div><div class="panel"><h3>Recent Reports</h3><div id="reports"></div></div>"""
+    script = """async function run(mode){const d=await(await fetch('/api/simulation-lab',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode})})).json();document.getElementById('out').textContent=JSON.stringify(d,null,2);load()}async function load(){const d=await(await fetch('/api/simulation-lab')).json();document.getElementById('modes').innerHTML=(d.modes||[]).map(m=>`<div class="card"><h3>${esc(m)}</h3><div class="desc">${esc(d.guardrail)}</div></div>`).join('');document.getElementById('reports').innerHTML=(d.last_reports||[]).map(r=>`<div class="row"><span>${esc(r.name)}</span><span>${esc(r.size)} bytes</span><span>${esc((r.updated_at||'').slice(0,19))}</span></div>`).join('')||'No reports found.'}load();"""
+    return _shared_shell("Simulation Lab", "Simulation Lab", "Backtest, walk-forward, paper replay, and stress scenario command center.", body, script)
+
+
+def _agent_memory_page():
+    body = """<div class="panel"><h3>Agent Handoff Memory</h3><div id="docs"></div></div><div class="panel"><h3>Commands</h3><div id="commands"></div></div><div class="panel"><h3>Safety Notes</h3><div id="safety"></div></div>"""
+    script = """async function load(){const d=await(await fetch('/api/agent-memory')).json();document.getElementById('docs').innerHTML=(d.handoff_docs||[]).map(x=>`<div class="row"><span>${esc(x.title)}</span><span>${x.exists?'READY':'MISSING'}</span><span>${esc(x.path)} - ${esc(x.preview)}</span></div>`).join('');document.getElementById('commands').innerHTML=(d.commands||[]).map(c=>`<div class="row"><span>PowerShell</span><span>Command</span><span>${esc(c)}</span></div>`).join('');document.getElementById('safety').innerHTML=(d.safety_notes||[]).map(s=>`<div class="row"><span class="green">RULE</span><span>Safety</span><span>${esc(s)}</span></div>`).join('')}load();"""
+    return _shared_shell("Agent Memory", "Agent Memory Center", "Persistent handoff brain for future agents and operators.", body, script)
+
+
 @app.route("/")
 @app.route("/miro")
 def dashboard():
@@ -3758,6 +4052,21 @@ def dashboard():
 @app.route("/pipeline")
 def pipeline_dashboard():
     return PIPELINE_DASHBOARD_HTML
+
+
+@app.route("/autonomy-suite")
+def autonomy_suite_dashboard():
+    return _autonomy_suite_page()
+
+
+@app.route("/risk-cockpit")
+def risk_cockpit_dashboard():
+    return _risk_cockpit_page()
+
+
+@app.route("/trade-journal")
+def trade_journal_dashboard():
+    return _trade_journal_page()
 
 
 @app.route("/operations")
@@ -3773,6 +4082,16 @@ def scoreboard_dashboard():
 @app.route("/strategy-lab")
 def strategy_lab_dashboard():
     return _strategy_lab_page()
+
+
+@app.route("/simulation-lab")
+def simulation_lab_dashboard():
+    return _simulation_lab_page()
+
+
+@app.route("/agent-memory")
+def agent_memory_dashboard():
+    return _agent_memory_page()
 
 
 @app.route("/risk-timeline")
@@ -3795,9 +4114,14 @@ def legacy_dashboard():
     legacy_nav = """
     <div style="position:sticky;top:0;z-index:9999;background:#080a0c;border-bottom:1px solid #27313b;padding:10px 18px;font-family:Arial,sans-serif;display:flex;gap:10px;flex-wrap:wrap">
       <a style="color:#b5c0cc;text-decoration:none" href="/">Command</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/autonomy-suite">Autonomy Suite</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/risk-cockpit">Risk Cockpit</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/trade-journal">Trade Journal</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/operations">Operations</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/scoreboard">Scoreboard</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/strategy-lab">Strategy Lab</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/simulation-lab">Simulation Lab</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/agent-memory">Agent Memory</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/risk-timeline">Risk Timeline</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/setup">Setup Wizard</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/pipeline">Pipeline</a>

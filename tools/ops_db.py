@@ -66,6 +66,25 @@ def _init(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS trade_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            symbol TEXT,
+            strategy TEXT,
+            decision TEXT NOT NULL,
+            confidence REAL,
+            entry REAL,
+            stop_loss REAL,
+            take_profit REAL,
+            risk_json TEXT,
+            context_json TEXT,
+            outcome_json TEXT,
+            status TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
 
 
@@ -150,10 +169,75 @@ def recent_promotion_events(limit: int = 50) -> List[Dict[str, Any]]:
     return [_row_to_dict(row) for row in rows]
 
 
+def record_trade_decision(
+    *,
+    symbol: str = "",
+    strategy: str = "",
+    decision: str = "HOLD",
+    confidence: Optional[float] = None,
+    entry: Optional[float] = None,
+    stop_loss: Optional[float] = None,
+    take_profit: Optional[float] = None,
+    risk: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+    outcome: Optional[Dict[str, Any]] = None,
+    status: str = "observed",
+) -> Dict[str, Any]:
+    payload = {
+        "created_at": _now(),
+        "symbol": symbol,
+        "strategy": strategy,
+        "decision": decision,
+        "confidence": confidence,
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "risk": risk or {},
+        "context": context or {},
+        "outcome": outcome or {},
+        "status": status,
+    }
+    with _connect() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO trade_decisions(
+                created_at, symbol, strategy, decision, confidence, entry, stop_loss,
+                take_profit, risk_json, context_json, outcome_json, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["created_at"],
+                symbol,
+                strategy,
+                decision,
+                confidence,
+                entry,
+                stop_loss,
+                take_profit,
+                json.dumps(payload["risk"], default=str),
+                json.dumps(payload["context"], default=str),
+                json.dumps(payload["outcome"], default=str),
+                status,
+            ),
+        )
+        payload["id"] = cursor.lastrowid
+    return payload
+
+
+def recent_trade_decisions(limit: int = 100) -> List[Dict[str, Any]]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM trade_decisions ORDER BY id DESC LIMIT ?",
+            (max(1, min(int(limit), 500)),),
+        ).fetchall()
+    return [_decision_row_to_dict(row) for row in rows]
+
+
 def database_summary() -> Dict[str, Any]:
     with _connect() as conn:
         tables = {}
-        for table in ("audit_events", "metric_snapshots", "promotion_events"):
+        for table in ("audit_events", "metric_snapshots", "promotion_events", "trade_decisions"):
             count = conn.execute("SELECT COUNT(*) AS c FROM {}".format(table)).fetchone()["c"]
             latest = conn.execute("SELECT created_at FROM {} ORDER BY id DESC LIMIT 1".format(table)).fetchone()
             tables[table] = {"count": count, "latest": latest["created_at"] if latest else None}
@@ -168,4 +252,22 @@ def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
             item["payload"] = json.loads(payload)
         except json.JSONDecodeError:
             item["payload"] = payload
+    return item
+
+
+def _decision_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
+    item = dict(row)
+    for column, target in (
+        ("risk_json", "risk"),
+        ("context_json", "context"),
+        ("outcome_json", "outcome"),
+    ):
+        raw = item.pop(column, None)
+        if raw:
+            try:
+                item[target] = json.loads(raw)
+            except json.JSONDecodeError:
+                item[target] = raw
+        else:
+            item[target] = {}
     return item

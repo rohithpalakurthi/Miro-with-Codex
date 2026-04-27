@@ -9,9 +9,14 @@ class OperationsPagesTests(unittest.TestCase):
 
         client = server.app.test_client()
         for path, marker in [
+            ("/autonomy-suite", "Autonomy Suite"),
+            ("/risk-cockpit", "Risk Cockpit"),
+            ("/trade-journal", "Trade Decision Journal"),
             ("/operations", "Operations Console"),
             ("/scoreboard", "Paper Trading Scoreboard"),
             ("/strategy-lab", "Strategy Lab"),
+            ("/simulation-lab", "Simulation Lab"),
+            ("/agent-memory", "Agent Memory Center"),
             ("/risk-timeline", "Risk Event Timeline"),
             ("/setup", "Setup Wizard"),
         ]:
@@ -23,8 +28,8 @@ class OperationsPagesTests(unittest.TestCase):
         from agents.master_trader import miro_dashboard_server as server
 
         client = server.app.test_client()
-        required = ["Operations", "Scoreboard", "Strategy Lab", "Risk Timeline", "Setup Wizard", "Pipeline", "Rules"]
-        for path in ["/", "/operations", "/scoreboard", "/strategy-lab", "/risk-timeline", "/setup", "/pipeline", "/rules", "/legacy"]:
+        required = ["Autonomy Suite", "Risk Cockpit", "Trade Journal", "Operations", "Scoreboard", "Strategy Lab", "Simulation Lab", "Agent Memory", "Risk Timeline", "Setup Wizard", "Pipeline", "Rules"]
+        for path in ["/", "/autonomy-suite", "/risk-cockpit", "/trade-journal", "/operations", "/scoreboard", "/strategy-lab", "/simulation-lab", "/agent-memory", "/risk-timeline", "/setup", "/pipeline", "/rules", "/legacy"]:
             html = client.get(path).get_data(as_text=True)
             for label in required:
                 self.assertIn(label, html, "{} missing {}".format(path, label))
@@ -41,6 +46,13 @@ class OperationsPagesTests(unittest.TestCase):
             ("/api/ops/config-snapshots", "items"),
             ("/api/ops/events", "database"),
             ("/api/ops/metrics/history", "items"),
+            ("/api/trade-journal", "items"),
+            ("/api/promotion/funnel", "stages"),
+            ("/api/risk-cockpit", "live_safety"),
+            ("/api/mt5/reconcile", "checks"),
+            ("/api/agent-memory", "handoff_docs"),
+            ("/api/recovery/status", "recommended_actions"),
+            ("/api/simulation-lab", "modes"),
             ("/api/setup-wizard", "steps"),
         ]:
             response = client.get(path)

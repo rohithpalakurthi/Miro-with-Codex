@@ -2673,52 +2673,52 @@ button,input,select{font:inherit}
                 <div class="ops-title">Agent Runtime</div>
                 <div class="ops-desc">Start, restart, or stop the supervised `launch.py` process.</div>
                 <div class="ops-actions">
-                  <button class="btn good" onclick="controlAgents('start')">Start</button>
-                  <button class="btn" onclick="controlAgents('restart')">Restart</button>
-                  <button class="btn danger" onclick="controlAgents('stop')">Stop</button>
+                  <button class="btn good" onclick="controlAgents('start')" title="Starts the supervised launch.py agent orchestra in the background. Use this after setup, reboot, or when agents are stopped." aria-label="Start supervised trading agents">Start</button>
+                  <button class="btn" onclick="controlAgents('restart')" title="Stops and starts launch.py again. Use when agents are stale, stuck, or after changing runtime settings." aria-label="Restart supervised trading agents">Restart</button>
+                  <button class="btn danger" onclick="controlAgents('stop')" title="Stops the supervised launch.py process and child agents. Use before maintenance or when you want all autonomous activity paused." aria-label="Stop supervised trading agents">Stop</button>
                 </div>
               </div>
               <div class="ops-group">
                 <div class="ops-title">Monitoring</div>
                 <div class="ops-desc">Run health checks and control watchdog auto-recovery.</div>
                 <div class="ops-actions">
-                  <button class="btn" onclick="runSystemHealth()">Health</button>
-                  <button class="btn good" onclick="controlWatchdog('start')">Start Watchdog</button>
-                  <button class="btn" onclick="controlWatchdog('check')">Check</button>
-                  <button class="btn danger" onclick="controlWatchdog('stop')">Stop</button>
+                  <button class="btn" onclick="runSystemHealth()" title="Runs a full setup and runtime health scan: env vars, files, stale state, and service ports." aria-label="Run system health check">Health</button>
+                  <button class="btn good" onclick="controlWatchdog('start')" title="Starts auto-recovery monitoring. It can start stopped agents or restart stale agents when runtime files stop updating." aria-label="Start watchdog auto recovery">Start Watchdog</button>
+                  <button class="btn" onclick="controlWatchdog('check')" title="Runs one watchdog cycle now and reports what it would do based on current health and agent status." aria-label="Run one watchdog check">Check</button>
+                  <button class="btn danger" onclick="controlWatchdog('stop')" title="Stops watchdog auto-recovery. Agents keep their current state, but stale/crashed agents will not be automatically recovered." aria-label="Stop watchdog auto recovery">Stop</button>
                 </div>
               </div>
               <div class="ops-group">
                 <div class="ops-title">Communication</div>
                 <div class="ops-desc">Verify Telegram delivery and incident alert routing.</div>
                 <div class="ops-actions">
-                  <button class="btn good" onclick="testTelegram()">Test Telegram</button>
-                  <button class="btn good" onclick="testIncident()">Incident Alert</button>
+                  <button class="btn good" onclick="testTelegram()" title="Sends a real Telegram test message using the configured bot token and chat ID." aria-label="Send Telegram test message">Test Telegram</button>
+                  <button class="btn good" onclick="testIncident()" title="Sends a Telegram incident-style alert to verify crash/restart/health warning notifications." aria-label="Send incident alert test">Incident Alert</button>
                 </div>
               </div>
               <div class="ops-group">
                 <div class="ops-title">Safety Locks</div>
                 <div class="ops-desc">Keep live mode locked unless a short manual unlock is intentional.</div>
                 <div class="ops-actions">
-                  <button class="btn danger" onclick="setLiveLock('lock')">Lock Live</button>
-                  <button class="btn danger" onclick="setLiveLock('unlock')">Unlock 30m</button>
+                  <button class="btn danger" onclick="setLiveLock('lock')" title="Immediately closes the live-mode lock. Live execution remains blocked even if other gates pass." aria-label="Lock live trading mode">Lock Live</button>
+                  <button class="btn danger" onclick="setLiveLock('unlock')" title="Temporarily unlocks live mode for 30 minutes. Other safety gates still apply; this does not force live trading." aria-label="Unlock live trading mode for 30 minutes">Unlock 30m</button>
                 </div>
               </div>
               <div class="ops-group">
                 <div class="ops-title">Logs & Routine</div>
                 <div class="ops-desc">Inspect recent logs and run the lightweight daily maintenance routine.</div>
                 <div class="ops-actions">
-                  <button class="btn" onclick="loadLog('agents')">Agent Log</button>
-                  <button class="btn" onclick="loadLog('optimizer')">Optimizer Log</button>
-                  <button class="btn" onclick="runDailyRoutine()">Daily Routine</button>
+                  <button class="btn" onclick="loadLog('agents')" title="Shows the recent supervised launch.py/agent output from logs/agents_supervisor.log." aria-label="View agent supervisor log">Agent Log</button>
+                  <button class="btn" onclick="loadLog('optimizer')" title="Shows recent strategy optimizer/improvement history to inspect parameter changes and research activity." aria-label="View optimizer log">Optimizer Log</button>
+                  <button class="btn" onclick="runDailyRoutine()" title="Runs the lightweight daily maintenance routine: health check, status report, and alert if attention is needed." aria-label="Run daily maintenance routine">Daily Routine</button>
                 </div>
               </div>
               <div class="ops-group">
                 <div class="ops-title">State Maintenance</div>
                 <div class="ops-desc">Back up and reset local paper/runtime state. Restart agents after clearing runtime.</div>
                 <div class="ops-actions">
-                  <button class="btn danger" onclick="resetPaper(false)">Reset Paper</button>
-                  <button class="btn danger" onclick="resetPaper(true)">Clear Runtime</button>
+                  <button class="btn danger" onclick="resetPaper(false)" title="Backs up and resets paper-trading balance/trade state to a clean $10,000 account. Does not reset broker/MT5 balance." aria-label="Reset paper trading state">Reset Paper</button>
+                  <button class="btn danger" onclick="resetPaper(true)" title="Backs up paper state and removes stale runtime JSON such as agent status, signals, and safety snapshots. Restart agents after this." aria-label="Clear local runtime state">Clear Runtime</button>
                 </div>
               </div>
             </div>

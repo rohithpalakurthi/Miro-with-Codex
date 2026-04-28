@@ -108,6 +108,7 @@ FILES = {
 }
 
 PAUSE_FILE     = "agents/master_trader/miro_pause.json"
+LEGACY_PAUSE_FILE = "agents/master_trader/paused.flag"
 KILL_SWITCH_FILE = "runtime/kill_switch.json"
 CB_CONFIG_FILE      = "agents/master_trader/circuit_breaker_config.json"
 TRADING_CONFIG_FILE = "agents/master_trader/trading_config.json"
@@ -371,6 +372,16 @@ def _write_pause(reason="Dashboard pause"):
         )
 
 
+def _clear_pause_state():
+    removed = []
+    for path in (PAUSE_FILE, LEGACY_PAUSE_FILE, KILL_SWITCH_FILE):
+        target = ROOT_PATH / path
+        if target.exists():
+            target.unlink()
+            removed.append(path)
+    return removed
+
+
 def _kill_switch(reason="Operator kill switch"):
     """Emergency stop for autonomous execution while leaving the dashboard online."""
     _write_pause(reason)
@@ -404,7 +415,12 @@ def _kill_switch_status():
         except Exception:
             state = {"status": "unreadable", "path": KILL_SWITCH_FILE}
     return {
-        "active": os.path.exists(PAUSE_FILE),
+        "active": os.path.exists(PAUSE_FILE) or os.path.exists(LEGACY_PAUSE_FILE),
+        "pause_files": {
+            "active": [p for p in (PAUSE_FILE, LEGACY_PAUSE_FILE) if (ROOT_PATH / p).exists()],
+            "primary": PAUSE_FILE,
+            "legacy": LEGACY_PAUSE_FILE,
+        },
         "state": state,
         "agents": agents_process_status(),
         "watchdog": watchdog_status(),
@@ -859,7 +875,7 @@ def api_pause():
 
 @app.route("/api/resume", methods=["POST"])
 def api_resume():
-    if os.path.exists(PAUSE_FILE): os.remove(PAUSE_FILE)
+    removed = _clear_pause_state()
     # Also clear daily_paused in CB state so circuit breaker can re-arm at the current limit
     cb_state_path = "agents/master_trader/circuit_breaker_state.json"
     if os.path.exists(cb_state_path):
@@ -872,7 +888,14 @@ def api_resume():
                 json.dump(st, f, indent=2)
         except:
             pass
-    return jsonify({"status": "resumed"})
+    result = {
+        "status": "resumed",
+        "removed": removed,
+        "live_lock": live_mode_lock_status(),
+        "note": "Pause state cleared. Live mode remains locked until explicitly unlocked.",
+    }
+    audit("resume_trading", result, detail="Cleared kill-switch pause state")
+    return jsonify(result)
 
 @app.route("/api/close-all", methods=["POST"])
 def api_close_all():
@@ -1550,6 +1573,16 @@ def api_setup_wizard_fix():
         result = lock_live_mode("Setup wizard safety lock")
     elif action == "kill_switch":
         result = _kill_switch("Setup wizard kill switch")
+    elif action == "resume":
+        removed = _clear_pause_state()
+        result = {
+            "ok": True,
+            "status": "resumed",
+            "removed": removed,
+            "live_lock": live_mode_lock_status(),
+            "note": "Pause state cleared. Live mode remains locked until explicitly unlocked.",
+        }
+        audit("setup_resume", result, detail="Setup wizard resume")
     elif action == "auto_fix_all":
         results = []
         before = _setup_wizard_payload()
@@ -4337,6 +4370,7 @@ def _operations_page():
 <div class="card"><h3>Communication</h3><div class="desc">Verify Telegram and incident alerts.</div><div class="actions"><button class="btn good" onclick="post('/api/telegram-test')">Telegram</button><button class="btn good" onclick="post('/api/incident-test')">Incident</button></div></div>
 <div class="card"><h3>Telegram Noise Control</h3><div class="desc">Mute noisy bot notifications or collect them into grouped digest buckets. Command replies still work.</div><div class="actions"><button class="btn danger" onclick="telegramMute(true)">Mute</button><button class="btn good" onclick="telegramMute(false)">Unmute</button><button class="btn" onclick="telegramMode('digest')">Digest Mode</button><button class="btn" onclick="telegramMode('instant')">Instant Mode</button></div></div>
 <div class="card"><h3>Safety Locks</h3><div class="desc">Live mode stays locked unless intentionally unlocked.</div><div class="actions"><button class="btn danger" onclick="live('lock')">Lock Live</button><button class="btn danger" onclick="live('unlock')">Unlock 30m</button></div></div>
+<div class="card"><h3>Recovery</h3><div class="desc">Clear kill-switch pause files before starting agents. Live mode remains locked.</div><div class="actions"><button class="btn good" onclick="resumeTrading()">Resume / Clear Pause</button></div></div>
 <div class="card"><h3>Kill Switch</h3><div class="desc">Emergency stop: pause MIRO, lock live mode, stop agents, and stop the watchdog. Dashboard stays online for recovery.</div><div class="actions"><button class="btn danger" onclick="killSwitch()">KILL SWITCH</button></div></div>
 <div class="card"><h3>Config Backup</h3><div class="desc">Snapshot or restore rules/safety configs.</div><div class="actions"><button class="btn" onclick="snapshot()">Snapshot</button><button class="btn" onclick="loadSnapshots()">List/Restore</button></div></div>
 <div class="card"><h3>State Maintenance</h3><div class="desc">Back up and reset local paper/runtime state.</div><div class="actions"><button class="btn danger" onclick="reset(false)">Reset Paper</button><button class="btn danger" onclick="reset(true)">Clear Runtime</button></div></div>
@@ -4348,6 +4382,7 @@ async function agents(action){if(action!=='start'&&!confirm(action+' agents?'))r
 async function watchdog(action){return post('/api/watchdog/control',{action})}
 async function health(){out(await(await fetch('/api/system-health')).json())}
 async function live(action){if(action==='unlock'&&!confirm('Unlock live mode for 30 minutes?'))return;return post('/api/live-lock',{action,minutes:30,reason:'Operations page '+action})}
+async function resumeTrading(){if(!confirm('Clear kill-switch pause state? Live trading stays locked.'))return;return post('/api/resume')}
 async function killSwitch(){if(!confirm('Emergency kill switch? This pauses trading, locks live mode, and stops agents/watchdog. Dashboard remains online.'))return;return post('/api/kill-switch',{reason:'Operations kill switch'})}
 async function telegramMute(muted){await post('/api/telegram-control',{muted});loadTelegram()}
 async function telegramMode(mode){await post('/api/telegram-control',{mode});loadTelegram()}

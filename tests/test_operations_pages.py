@@ -66,10 +66,13 @@ class OperationsPagesTests(unittest.TestCase):
 
         client = server.app.test_client()
         self.assertIn("KILL SWITCH", client.get("/setup").get_data(as_text=True))
-        self.assertIn("Kill Switch", client.get("/operations").get_data(as_text=True))
+        operations_html = client.get("/operations").get_data(as_text=True)
+        self.assertIn("Kill Switch", operations_html)
+        self.assertIn("Resume / Clear Pause", operations_html)
         response = client.get("/api/kill-switch")
         self.assertEqual(response.status_code, 200)
         self.assertIn("active", response.get_json())
+        self.assertIn("pause_files", response.get_json())
 
     def test_setup_wizard_fix_scan(self):
         from agents.master_trader import miro_dashboard_server as server

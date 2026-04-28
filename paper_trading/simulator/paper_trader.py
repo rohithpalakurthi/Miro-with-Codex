@@ -103,6 +103,9 @@ class PaperTradingEngine:
         sp = os.path.join(LOG_DIR, "state.json")
         if os.path.exists(sp):
             s = load_json(sp, {})
+            if s.get("source") == "MT5_LIVE":
+                print("[PaperTrader] Ignoring legacy MT5_LIVE dashboard state; keeping paper balance isolated.")
+                return
             account = s.get("account", {})
             metrics = s.get("metrics", {})
             positions = s.get("positions", {})

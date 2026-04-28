@@ -28,6 +28,7 @@ load_dotenv()
 SIGNAL_FILE    = "live_execution/bridge/signal.json"
 RESULT_FILE    = "live_execution/bridge/result.json"
 BRIDGE_LOG     = "live_execution/bridge/bridge_log.json"
+MT5_STATE_FILE = "live_execution/bridge/mt5_state.json"
 STATE_FILE     = "paper_trading/logs/state.json"
 TP1_STATE_FILE = "live_execution/bridge/tp1_state.json"
 
@@ -450,7 +451,7 @@ class MT5Bridge:
                     print("[BRIDGE] Closed position #{}".format(pos["ticket"]))
 
     def sync_to_dashboard(self):
-        """Sync MT5 positions to paper trading state for dashboard."""
+        """Sync MT5 account/positions without overwriting paper trading state."""
         if not self.connected:
             return
 
@@ -459,29 +460,16 @@ class MT5Bridge:
             return  # MT5 disconnected mid-cycle — skip this sync
         positions = self.get_open_positions()
 
-        # Update state file
         state = {
-            "balance"      : account["balance"],
-            "equity"       : account["equity"],
-            "profit"       : account["profit"],
-            "open_trades"  : positions,
-            "closed_trades": [],
-            "peak_balance" : account["balance"],
-            "last_update"  : datetime.now().isoformat(),
-            "source"       : "MT5_LIVE"
+            "connected"   : True,
+            "account"     : account,
+            "positions"   : positions,
+            "last_update" : datetime.now().isoformat(),
+            "source"      : "MT5_LIVE"
         }
 
-        # Load existing closed trades from paper trading log
-        if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r") as f:
-                old = json.load(f)
-            state["closed_trades"] = old.get("closed_trades", [])
-            state["peak_balance"]  = max(
-                account["balance"],
-                old.get("peak_balance", account["balance"])
-            )
-
-        with open(STATE_FILE, "w") as f:
+        os.makedirs(os.path.dirname(MT5_STATE_FILE), exist_ok=True)
+        with open(MT5_STATE_FILE, "w") as f:
             json.dump(state, f, indent=2, default=str)
 
     def log_event(self, event_type, data):

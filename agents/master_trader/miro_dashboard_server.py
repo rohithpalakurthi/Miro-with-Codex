@@ -3833,8 +3833,8 @@ function render(data){
 
   setText('gold-bid',num(price.bid||price.price||0,2));
   setText('gold-spread','spread '+num(price.spread||0,2));
-  setText('balance',money(acc.balance||paper.balance||0));
-  setText('equity','paper equity '+money(acc.equity||paper.equity||acc.balance||paper.balance||0));
+  setText('balance',money(acc.balance ?? paper.balance ?? 0));
+  setText('equity','paper equity '+money(acc.equity ?? paper.equity ?? acc.balance ?? paper.balance ?? 0));
   setText('mt5-balance',mt5.connected?money(mt5Acc.balance||0):'OFFLINE');
   $('mt5-balance').className=mt5.connected?'value mono green':'value mono red';
   setText('mt5-equity',mt5.connected?'mt5 equity '+money(mt5Acc.equity||0):'MT5 not connected');

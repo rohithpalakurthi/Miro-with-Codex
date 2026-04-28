@@ -32,6 +32,7 @@ load_dotenv()
 BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN", "")
 CHAT_ID      = os.getenv("TELEGRAM_CHAT_ID", "")
 STATE_FILE   = "paper_trading/logs/state.json"
+MT5_STATE_FILE = "live_execution/bridge/mt5_state.json"
 SENT_FILE    = "agents/telegram/sent_alerts.json"
 NEWS_FILE    = "agents/news_sentinel/news_log.json"
 RISK_FILE    = "agents/risk_manager/risk_state.json"
@@ -340,13 +341,13 @@ class TelegramAlertAgent:
     def check_live_positions(self):
         """Alert on new live MT5 positions (ticket-based, from mt5_bridge sync)."""
         try:
-            if not os.path.exists(STATE_FILE):
+            if not os.path.exists(MT5_STATE_FILE):
                 return
-            with open(STATE_FILE) as f:
+            with open(MT5_STATE_FILE) as f:
                 state = json.load(f)
             if state.get("source") != "MT5_LIVE":
                 return
-            for pos in state.get("open_trades", []):
+            for pos in state.get("positions", []):
                 ticket = pos.get("ticket")
                 if ticket and ticket not in self.known_tickets:
                     self.known_tickets.add(ticket)

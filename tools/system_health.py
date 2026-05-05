@@ -100,7 +100,7 @@ def _env_status(key: str, *, required: bool) -> Dict[str, str]:
 
 
 def run_health_check() -> Dict[str, Any]:
-    load_dotenv(ROOT / ".env")
+    load_dotenv(ROOT / ".env", override=True)
     checks: List[Dict[str, str]] = []
 
     for key in REQUIRED_ENV:

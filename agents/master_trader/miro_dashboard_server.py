@@ -12,7 +12,7 @@ from flask import Response
 from flask_cors import CORS
 from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(override=True)
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from backtesting.research.experiment_registry import load_registry

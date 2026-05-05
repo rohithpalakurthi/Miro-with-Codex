@@ -14,7 +14,7 @@ import threading
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 sys.path.append(os.getcwd())
 
 from core.state_schema import load_json, save_json

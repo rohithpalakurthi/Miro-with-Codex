@@ -28,6 +28,8 @@ OPTIONAL_ENV = [
     "NGROK_AUTHTOKEN",
 ]
 
+PLACEHOLDER_MARKERS = ("your_", "your-", "changeme", "change_me", "placeholder", "example")
+
 REQUIRED_PATHS = [
     "launch.py",
     "agents/master_trader/miro_dashboard_server.py",
@@ -85,23 +87,37 @@ def _check(name: str, status: str, detail: str, impact: str = "") -> Dict[str, s
     }
 
 
+def _env_status(key: str, *, required: bool) -> Dict[str, str]:
+    value = (os.getenv(key) or "").strip()
+    if not value:
+        return {"status": "blocker" if required else "warn", "detail": "missing"}
+    lowered = value.lower()
+    if any(marker in lowered for marker in PLACEHOLDER_MARKERS):
+        return {"status": "blocker" if required else "warn", "detail": "placeholder value"}
+    if key == "MT5_LOGIN" and not value.isdigit():
+        return {"status": "blocker", "detail": "must be numeric"}
+    return {"status": "ok", "detail": "present"}
+
+
 def run_health_check() -> Dict[str, Any]:
     load_dotenv(ROOT / ".env")
     checks: List[Dict[str, str]] = []
 
     for key in REQUIRED_ENV:
+        env = _env_status(key, required=True)
         checks.append(_check(
             "env {}".format(key),
-            "ok" if os.getenv(key) else "blocker",
-            "present" if os.getenv(key) else "missing",
+            env["status"],
+            env["detail"],
             "Required for MT5 login and live account reads.",
         ))
 
     for key in OPTIONAL_ENV:
+        env = _env_status(key, required=False)
         checks.append(_check(
             "env {}".format(key),
-            "ok" if os.getenv(key) else "warn",
-            "present" if os.getenv(key) else "missing",
+            env["status"],
+            env["detail"],
             "Optional, but enables alerts, AI reasoning, or mobile tunnel.",
         ))
 

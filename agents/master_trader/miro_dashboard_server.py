@@ -1326,6 +1326,118 @@ def _mt5_reconcile_payload():
     }
 
 
+def _flow_state(ok, warn=False):
+    if ok:
+        return "ok"
+    return "warn" if warn else "blocker"
+
+
+def _operator_flow_payload():
+    health = run_health_check()
+    agents = agents_process_status()
+    watchdog = watchdog_status()
+    kill = _kill_switch_status()
+    paper = _scoreboard_payload()
+    mt5_state = _get_mt5_state()
+    risk = _risk_cockpit_payload()
+    readiness = _build_autonomy_readiness(mt5_state=mt5_state, live_safety=risk.get("live_safety"))
+    promotion = resolve_promotion("v15f")
+    orchestrator = _load("orchestrator") or {}
+    cb_state = _load("circuit_breaker") or {}
+    env_issues = [c for c in health.get("checks", []) if c.get("name", "").startswith("env ") and c.get("status") != "ok"]
+    setup_blockers = [c for c in health.get("checks", []) if c.get("status") == "blocker"]
+    setup_warnings = [c for c in health.get("checks", []) if c.get("status") == "warn"]
+    live_safety = risk.get("live_safety", {})
+    orchestrator_go = str(orchestrator.get("verdict", "")).upper() == "GO"
+    promotion_for = str(promotion.get("approved_for", "research_only")).lower()
+    paper_ready = promotion_for in {"paper", "demo", "live"}
+    demo_ready = promotion_for in {"demo", "live"}
+    live_allowed = bool(live_safety.get("allowed"))
+
+    why_no_trades = []
+    if env_issues:
+        why_no_trades.append("Fix environment values first: {}".format(", ".join("{}={}".format(i["name"].replace("env ", ""), i.get("detail")) for i in env_issues[:4])))
+    if not orchestrator_go:
+        why_no_trades.append("Orchestrator is {}: {}".format(orchestrator.get("verdict", "UNKNOWN"), "; ".join(orchestrator.get("reasons", [])[:2]) or "signal gates not aligned"))
+    if not paper_ready:
+        why_no_trades.append("Strategy is not approved for paper trading yet.")
+    if not live_allowed:
+        why_no_trades.append("MT5/demo execution is blocked: {}".format(" | ".join(live_safety.get("reasons", [])[:3]) or "live safety gates are closed"))
+    if kill.get("active"):
+        why_no_trades.append("Kill switch/pause is active.")
+    if not agents.get("running"):
+        why_no_trades.append("Agents are not running.")
+
+    flow = [
+        {
+            "step": "1. Dashboard",
+            "status": "ok",
+            "current": "localhost:5055 online",
+            "check": "Open Command Center or Operator Map.",
+            "start": "Run .\\run_dashboard.ps1 if unavailable.",
+            "link": "/",
+        },
+        {
+            "step": "2. Setup",
+            "status": _flow_state(not setup_blockers, bool(setup_warnings)),
+            "current": "{} blockers / {} warnings".format(len(setup_blockers), len(setup_warnings)),
+            "check": "Setup Wizard should show no credential blockers.",
+            "start": "Fix .env placeholders, then Rescan.",
+            "link": "/setup",
+        },
+        {
+            "step": "3. Runtime",
+            "status": _flow_state(agents.get("running") and watchdog.get("running")),
+            "current": "agents={} watchdog={}".format("running" if agents.get("running") else "stopped", "running" if watchdog.get("running") else "stopped"),
+            "check": "Operations should show Agents and Watchdog running.",
+            "start": "Click Resume / Clear Pause, Start, then Start Watchdog.",
+            "link": "/operations",
+        },
+        {
+            "step": "4. Paper Account",
+            "status": _flow_state(float(paper.get("balance", 0) or 0) > 0),
+            "current": "balance=${:,.2f}, trades={}".format(float(paper.get("balance", 0) or 0), paper.get("total_trades", 0)),
+            "check": "Scoreboard shows paper balance and paper trades only.",
+            "start": "Reset Paper only if local paper state is wrong.",
+            "link": "/scoreboard",
+        },
+        {
+            "step": "5. Signal Gates",
+            "status": _flow_state(orchestrator_go and paper_ready, warn=paper_ready),
+            "current": "orchestrator={} promotion={}/{}".format(orchestrator.get("verdict", "UNKNOWN"), promotion.get("status", "candidate"), promotion_for),
+            "check": "Orchestrator must be GO and promotion must allow paper/demo.",
+            "start": "Use Pipeline Flow, Rules Control, and Strategy Lab.",
+            "link": "/pipeline",
+        },
+        {
+            "step": "6. MT5 / Demo Execution",
+            "status": _flow_state(live_allowed, warn=bool(mt5_state.get("connected"))),
+            "current": "mt5={} live_safety={}".format("connected" if mt5_state.get("connected") else "offline", "allowed" if live_allowed else "blocked"),
+            "check": "Risk Cockpit must show live/demo safety allowed before MT5 orders.",
+            "start": "Only unlock live/demo after setup, GO signal, promotion, and risk gates pass.",
+            "link": "/risk-cockpit",
+        },
+    ]
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "overall": "blocked" if any(i.get("status") == "blocker" for i in flow) else "warn" if any(i.get("status") == "warn" for i in flow) else "ok",
+        "flow": flow,
+        "why_no_trades": why_no_trades or ["No blocker detected; waiting for a valid strategy signal."],
+        "next_best_action": why_no_trades[0] if why_no_trades else "Watch Pipeline Flow for the next signal.",
+        "health": {"status": health.get("status"), "score": health.get("score"), "blockers": len(setup_blockers), "warnings": len(setup_warnings)},
+        "paper": paper,
+        "mt5": mt5_state,
+        "orchestrator": {"verdict": orchestrator.get("verdict"), "reasons": orchestrator.get("reasons", [])},
+        "promotion": promotion,
+        "live_safety": live_safety,
+        "agents": agents,
+        "watchdog": watchdog,
+        "kill_switch": kill,
+        "env_issues": env_issues,
+    }
+
+
 def _agent_memory_payload():
     docs = [
         ("Agent Handoff", "docs/AGENT_HANDOFF.md"),
@@ -1456,6 +1568,11 @@ def api_risk_cockpit():
 @app.route("/api/mt5/reconcile", methods=["GET"])
 def api_mt5_reconcile():
     return jsonify(_mt5_reconcile_payload())
+
+
+@app.route("/api/operator-flow", methods=["GET"])
+def api_operator_flow():
+    return jsonify(_operator_flow_payload())
 
 
 @app.route("/api/agent-memory", methods=["GET"])
@@ -3310,7 +3427,7 @@ button,input,select{font:inherit}
         <a class="active" href="/">Command Center</a><a href="/autonomy-suite">Autonomy Suite</a><a href="/risk-cockpit">Risk Cockpit</a><a href="/scoreboard">Scoreboard</a>
       </details>
       <details class="nav-group" open><summary><span>Operate</span><small>Start, stop, recover, and control execution.</small></summary>
-        <a href="/operations">Operations</a><a href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a>
+        <a href="/operations">Operations</a><a href="/operator-map">Operator Map</a><a href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a>
       </details>
       <details class="nav-group"><summary><span>Research</span><small>Improve strategies before promotion.</small></summary>
         <a href="/strategy-lab">Strategy Lab</a><a href="/simulation-lab">Simulation Lab</a>
@@ -3941,7 +4058,7 @@ html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-f
         <a href="/">Command Center</a><a href="/autonomy-suite">Autonomy Suite</a><a href="/risk-cockpit">Risk Cockpit</a><a href="/scoreboard">Scoreboard</a>
       </details>
       <details class="nav-group" open><summary><span>Operate</span><small>Start, stop, recover, and control execution.</small></summary>
-        <a href="/operations">Operations</a><a href="/pipeline">Pipeline Flow</a><a class="active" href="/rules">Rules Control</a>
+        <a href="/operations">Operations</a><a href="/operator-map">Operator Map</a><a href="/pipeline">Pipeline Flow</a><a class="active" href="/rules">Rules Control</a>
       </details>
       <details class="nav-group"><summary><span>Research</span><small>Improve strategies before promotion.</small></summary>
         <a href="/strategy-lab">Strategy Lab</a><a href="/simulation-lab">Simulation Lab</a>
@@ -4122,7 +4239,7 @@ body{background:linear-gradient(180deg,rgba(66,198,255,.08),transparent 260px),r
         <a href="/">Command Center</a><a href="/autonomy-suite">Autonomy Suite</a><a href="/risk-cockpit">Risk Cockpit</a><a href="/scoreboard">Scoreboard</a>
       </details>
       <details class="nav-group" open><summary><span>Operate</span><small>Start, stop, recover, and control execution.</small></summary>
-        <a href="/operations">Operations</a><a class="active" href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a>
+        <a href="/operations">Operations</a><a href="/operator-map">Operator Map</a><a class="active" href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a>
       </details>
       <details class="nav-group"><summary><span>Research</span><small>Improve strategies before promotion.</small></summary>
         <a href="/strategy-lab">Strategy Lab</a><a href="/simulation-lab">Simulation Lab</a>
@@ -4237,7 +4354,7 @@ OPS_PAGE_HTML = r"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><
 <style>
 :root{--bg:#0b0d10;--panel:#11161b;--panel2:#151b22;--line:#27313b;--text:#e9edf1;--muted:#8b98a6;--green:#2fd17c;--red:#f05252;--amber:#e6ad32;--cyan:#42c6ff;--mono:'IBM Plex Mono',monospace;--font:'IBM Plex Sans',sans-serif}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,rgba(66,198,255,.08),transparent 340px),var(--bg);color:var(--text);font-family:var(--font);font-size:13px}.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{border-right:1px solid var(--line);padding:18px 14px;background:#080a0c}.brand{font-weight:700;letter-spacing:.08em;margin-bottom:20px}.nav{display:grid;gap:6px}.nav a{color:#b5c0cc;text-decoration:none;padding:9px 10px;border-radius:6px}.nav a.active,.nav a:hover{background:var(--panel2);color:var(--text)}.main{padding:18px}.title{font-size:28px;font-weight:700}.sub{color:var(--muted);margin:4px 0 16px}.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:13px}.card h3{margin:0 0 5px;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.desc{color:var(--muted);font-size:12px;line-height:1.5;min-height:38px}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.btn{background:var(--panel2);border:1px solid #344250;color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer}.btn.good{color:#d7ffe7;border-color:rgba(47,209,124,.45)}.btn.danger{color:#ffd4d4;border-color:rgba(240,82,82,.45)}.log{white-space:pre-wrap;font-family:var(--mono);font-size:11px;background:#0d1115;border:1px solid var(--line);border-radius:7px;padding:10px;max-height:260px;overflow:auto;margin-top:12px}.audit{margin-top:12px}.row{display:grid;grid-template-columns:150px 140px 1fr;gap:8px;padding:8px;border-bottom:1px solid rgba(39,49,59,.7);font-family:var(--mono);font-size:11px}.ok{color:var(--green)}.warn{color:var(--amber)}@media(max-width:1100px){.shell{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.row{grid-template-columns:1fr}}
-</style></head><body><div class="shell"><aside class="side"><div class="brand">MIRO CONTROL</div><nav class="nav"><a href="/">Command Center</a><a class="active" href="/operations">Operations</a><a href="/scoreboard">Scoreboard</a><a href="/strategy-lab">Strategy Lab</a><a href="/risk-timeline">Risk Timeline</a><a href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a></nav></aside><main class="main"><div class="title">Operations Console</div><div class="sub">Grouped controls with audit trail, config snapshots, and safer state maintenance.</div>
+</style></head><body><div class="shell"><aside class="side"><div class="brand">MIRO CONTROL</div><nav class="nav"><a href="/">Command Center</a><a class="active" href="/operations">Operations</a><a href="/operator-map">Operator Map</a><a href="/scoreboard">Scoreboard</a><a href="/strategy-lab">Strategy Lab</a><a href="/risk-timeline">Risk Timeline</a><a href="/pipeline">Pipeline Flow</a><a href="/rules">Rules Control</a></nav></aside><main class="main"><div class="title">Operations Console</div><div class="sub">Grouped controls with audit trail, config snapshots, and safer state maintenance.</div>
 <div class="grid">
 <div class="card"><h3>Agent Runtime</h3><div class="desc">Control supervised launch.py process.</div><div class="actions"><button class="btn good" onclick="agents('start')" title="Start supervised agents">Start</button><button class="btn" onclick="agents('restart')" title="Restart all supervised agents">Restart</button><button class="btn danger" onclick="agents('stop')" title="Stop supervised agents">Stop</button></div></div>
 <div class="card"><h3>Monitoring</h3><div class="desc">Health checks and watchdog auto-recovery.</div><div class="actions"><button class="btn" onclick="health()" title="Run health scan">Health</button><button class="btn good" onclick="watchdog('start')" title="Start watchdog">Start Watchdog</button><button class="btn" onclick="watchdog('check')" title="Run one watchdog check">Check</button><button class="btn danger" onclick="watchdog('stop')" title="Stop watchdog">Stop</button></div></div>
@@ -4287,6 +4404,7 @@ def _nav_groups():
         ]),
         ("Operate", "Start, stop, recover, and control execution.", [
             ("Operations", "/operations"),
+            ("Operator Map", "/operator-map"),
             ("Pipeline Flow", "/pipeline"),
             ("Rules Control", "/rules"),
         ]),
@@ -4401,6 +4519,32 @@ loadAudit();loadSnapshots();loadOpsDb();loadTelegram();setInterval(loadOpsDb,100
     return _shared_shell("Operations", "Operations Console", "Grouped controls, audit trail, and config backup/restore.", body, script)
 
 
+def _operator_map_page():
+    body = """<style>.flow-map{display:grid;gap:12px}.flow-step{display:grid;grid-template-columns:78px minmax(0,1fr) 150px;gap:12px;align-items:stretch;border:1px solid var(--line);border-radius:12px;background:rgba(17,22,27,.95);padding:12px;position:relative}.flow-step:not(:last-child)::after{content:'';position:absolute;left:48px;bottom:-13px;width:2px;height:13px;background:var(--line2)}.node{display:grid;place-items:center;border-radius:12px;border:1px solid var(--line2);font-family:var(--mono);font-weight:700}.node.ok{color:var(--green);border-color:rgba(47,209,124,.45);background:rgba(47,209,124,.08)}.node.warn{color:var(--amber);border-color:rgba(230,173,50,.45);background:rgba(230,173,50,.08)}.node.blocker{color:var(--red);border-color:rgba(240,82,82,.45);background:rgba(240,82,82,.08)}.flow-step h3{margin:0 0 6px;font-size:14px}.flow-meta{display:grid;gap:5px;color:var(--muted);line-height:1.35}.flow-meta b{color:var(--text)}.why-list{display:grid;gap:8px}.why{border:1px solid rgba(240,82,82,.32);background:rgba(240,82,82,.06);border-radius:9px;padding:10px;color:#ffd4d4}.mini-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}@media(max-width:900px){.flow-step{grid-template-columns:1fr}.flow-step:not(:last-child)::after{display:none}.mini-grid{grid-template-columns:1fr}}</style><div class="grid4" id="flowSummary"></div><div class="panel"><h3>Why No Trades Right Now</h3><div class="desc">This is the plain-English blocker list. Green runtime does not mean orders will fire; every gate below must pass.</div><div id="why" class="why-list" style="margin-top:10px">Loading...</div></div><div class="panel"><h3>Operator Flow Map</h3><div class="desc">Follow this order every time: setup first, runtime second, paper/signal gates third, MT5/demo last.</div><div id="flow" class="flow-map" style="margin-top:12px"></div></div><div class="mini-grid"><div class="panel" id="envBox"></div><div class="panel" id="signalBox"></div><div class="panel" id="mt5Box"></div></div>"""
+    script = """
+function cls(s){return s==='ok'?'green':s==='warn'?'amber':'red'}
+function badge(s){return `<span class="pill ${cls(s)}">${esc(String(s||'unknown').toUpperCase())}</span>`}
+async function load(){
+  const d=await(await fetch('/api/operator-flow')).json();
+  const cells=[
+    ['Overall',String(d.overall||'--').toUpperCase(),d.next_best_action||'',cls(d.overall)],
+    ['Agents',d.agents?.running?'RUNNING':'STOPPED',d.agents?.pid?'pid '+d.agents.pid:'no pid',d.agents?.running?'green':'red'],
+    ['Watchdog',d.watchdog?.running?'RUNNING':'STOPPED',d.watchdog?.pid?'pid '+d.watchdog.pid:'no pid',d.watchdog?.running?'green':'amber'],
+    ['Live Lock',d.live_safety?.live_mode_lock?.unlocked?'UNLOCKED':'LOCKED',d.live_safety?.execution_target||'demo',d.live_safety?.live_mode_lock?.unlocked?'amber':'green']
+  ];
+  document.getElementById('flowSummary').innerHTML=cells.map(c=>`<div class="status"><div class="label">${esc(c[0])}</div><div class="value ${c[3]}">${esc(c[1])}</div><div class="sub">${esc(c[2])}</div></div>`).join('');
+  document.getElementById('why').innerHTML=(d.why_no_trades||[]).map(x=>`<div class="why">${esc(x)}</div>`).join('');
+  document.getElementById('flow').innerHTML=(d.flow||[]).map((x,i)=>`<div class="flow-step"><div class="node ${esc(x.status)}">${i+1}</div><div><h3>${esc(x.step)} ${badge(x.status)}</h3><div class="flow-meta"><div><b>Current:</b> ${esc(x.current)}</div><div><b>Check:</b> ${esc(x.check)}</div><div><b>What to do:</b> ${esc(x.start)}</div></div></div><div class="actions"><button class="btn" onclick="location.href='${esc(x.link)}'">Open</button></div></div>`).join('');
+  const env=d.env_issues||[], orch=d.orchestrator||{}, mt5=d.mt5||{}, live=d.live_safety||{};
+  document.getElementById('envBox').innerHTML='<h3>Environment</h3>'+((env.length?env.map(e=>`<div class="row"><span>${esc(e.name)}</span><span class="${cls(e.status)}">${esc(e.status)}</span><span>${esc(e.detail)}</span></div>`).join(''):'<div class="desc green">Environment checks are green.</div>')+'<div class="actions"><button class="btn" onclick="location.href=\\'/setup\\'">Open Setup</button></div>');
+  document.getElementById('signalBox').innerHTML=`<h3>Signal Decision</h3><div class="desc">Orchestrator: <b class="${orch.verdict==='GO'?'green':'red'}">${esc(orch.verdict||'UNKNOWN')}</b></div>`+(orch.reasons||[]).map(r=>`<div class="row"><span>Reason</span><span>Gate</span><span>${esc(r)}</span></div>`).join('')+'<div class="actions"><button class="btn" onclick="location.href=\\'/pipeline\\'">Open Pipeline</button></div>';
+  document.getElementById('mt5Box').innerHTML=`<h3>MT5 / Demo</h3><div class="desc">MT5: <b class="${mt5.connected?'green':'red'}">${mt5.connected?'CONNECTED':'OFFLINE'}</b><br>Execution safety: <b class="${live.allowed?'green':'red'}">${live.allowed?'ALLOWED':'BLOCKED'}</b></div>`+(live.reasons||[]).map(r=>`<div class="row"><span>Blocker</span><span>Safety</span><span>${esc(r)}</span></div>`).join('')+'<div class="actions"><button class="btn" onclick="location.href=\\'/risk-cockpit\\'">Open Risk</button></div>';
+}
+load();setInterval(load,5000);
+"""
+    return _shared_shell("Operator Map", "Operator Flow Map", "A literal start/check/trade-readiness map for operating MIRO without guessing where to look.", body, script)
+
+
 def _scoreboard_page():
     body = """<div class="grid4" id="grid"></div>"""
     script = """const fmt=v=>Number(v||0).toFixed(2);async function load(){const d=await(await fetch('/api/scoreboard')).json();const items=[['Balance','$'+fmt(d.balance)],['Realized P&L','$'+fmt(d.realized_pnl),d.realized_pnl>=0?'green':'red'],['Win Rate',fmt(d.win_rate)+'%'],['Profit Factor',fmt(d.profit_factor)],['Drawdown',fmt(d.drawdown_pct)+'%','amber'],['Trades',d.total_trades],['Average R',fmt(d.avg_r)],['Readiness',d.readiness_mode,d.ready?'green':'red'],['Blockers',d.blocker_count],['Warnings',d.warning_count],['Best Trade','$'+fmt(d.best_trade),'green'],['Worst Trade','$'+fmt(d.worst_trade),'red']];document.getElementById('grid').innerHTML=items.map(i=>`<div class="card"><div class="label">${i[0]}</div><div class="value ${i[2]||''}">${i[1]}</div></div>`).join('')}load();setInterval(load,5000);"""
@@ -4504,6 +4648,11 @@ def operations_dashboard():
     return _operations_page()
 
 
+@app.route("/operator-map")
+def operator_map_dashboard():
+    return _operator_map_page()
+
+
 @app.route("/scoreboard")
 def scoreboard_dashboard():
     return _scoreboard_page()
@@ -4548,6 +4697,7 @@ def legacy_dashboard():
       <a style="color:#b5c0cc;text-decoration:none" href="/risk-cockpit">Risk Cockpit</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/trade-journal">Trade Journal</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/operations">Operations</a>
+      <a style="color:#b5c0cc;text-decoration:none" href="/operator-map">Operator Map</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/scoreboard">Scoreboard</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/strategy-lab">Strategy Lab</a>
       <a style="color:#b5c0cc;text-decoration:none" href="/simulation-lab">Simulation Lab</a>

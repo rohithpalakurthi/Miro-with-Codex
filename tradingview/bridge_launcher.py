@@ -31,7 +31,7 @@ NGROK_URLS = [
     "/c/Users/rohit/Downloads/ngrok-v3-stable-windows-amd64/ngrok.exe",
 ]
 
-WEBHOOK_PORT  = 5000
+WEBHOOK_PORT  = int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "5056") or 5056)
 NGROK_API     = "http://127.0.0.1:4040/api/tunnels"
 STATUS_FILE   = "tradingview/bridge_status.json"
 

@@ -39,6 +39,7 @@ from tools.telegram_router import (
 from tools.agent_supervisor import (
     restart as restart_agents,
     start as start_agents,
+    start_webhook,
     start_watchdog,
     status as agents_process_status,
     stop as stop_agents,
@@ -230,9 +231,9 @@ SETUP_FIXES = {
         "severity": "warn",
         "title": "Start TradingView webhook",
         "why": "TradingView alerts cannot be received unless the webhook bridge is running.",
-        "how": "Start the agents; the bridge/webhook service is part of the runtime stack.",
-        "command": ".\\agent_control.ps1 start",
-        "action": "start_agents",
+        "how": "Start the TradingView webhook service on localhost:5056.",
+        "command": "python tradingview/webhook_server.py",
+        "action": "start_webhook",
         "auto": True,
     },
 }
@@ -285,6 +286,10 @@ def _setup_fix_for(check):
             "action": "start_agents",
             "auto": True,
         }
+        if name == "runtime bridge_status":
+            base["how"] = "Start the TradingView webhook service, which refreshes bridge_status."
+            base["command"] = "python tradingview/webhook_server.py"
+            base["action"] = "start_webhook"
     payload = {
         "name": name,
         "status": check.get("status"),
@@ -1684,6 +1689,8 @@ def api_setup_wizard_fix():
         result = restart_agents()
     elif action == "start_watchdog":
         result = start_watchdog()
+    elif action == "start_webhook":
+        result = start_webhook()
     elif action == "telegram_test":
         result = send_telegram_test()
     elif action == "lock_live":
@@ -1711,6 +1718,8 @@ def api_setup_wizard_fix():
                 fix_result = start_agents()
             elif fix_action == "start_watchdog":
                 fix_result = start_watchdog()
+            elif fix_action == "start_webhook":
+                fix_result = start_webhook()
             else:
                 fix_result = {"ok": False, "skipped": True, "reason": "No safe handler for {}".format(fix_action)}
             results.append({"issue": item.get("name"), "action": fix_action, "result": fix_result})
@@ -4567,7 +4576,7 @@ def _risk_timeline_page():
 
 
 def _setup_page():
-    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
+    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn good" onclick="fix('start_webhook')">Start Webhook</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
     script = """
 let lastWizard=null;
 async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;if(action==='kill_switch'&&!confirm('KILL SWITCH: pause MIRO, lock live mode, stop agents, and stop watchdog? Dashboard will stay online.'))return;document.getElementById('fixOut').textContent='Running '+action+' and rescanning...';const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}

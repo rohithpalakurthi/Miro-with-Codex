@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -19,6 +20,9 @@ STATUS_FILE = RUNTIME_DIR / "agent_supervisor.json"
 LOG_FILE = ROOT / "logs" / "agents_supervisor.log"
 WATCHDOG_PID_FILE = RUNTIME_DIR / "watchdog.pid"
 WATCHDOG_LOG_FILE = ROOT / "logs" / "watchdog.log"
+WEBHOOK_PID_FILE = RUNTIME_DIR / "tradingview_webhook.pid"
+WEBHOOK_LOG_FILE = ROOT / "logs" / "tradingview_webhook.log"
+WEBHOOK_STATUS_FILE = ROOT / "tradingview" / "bridge_status.json"
 
 
 def _now() -> str:
@@ -37,6 +41,17 @@ def _read_pid() -> int | None:
 def _process_running(pid: int | None) -> bool:
     if not pid or pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "PID eq {}".format(pid), "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            return str(pid) in result.stdout
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True
@@ -181,9 +196,102 @@ def stop_watchdog(timeout: float = 8.0) -> Dict[str, Any]:
     return _write_status({**watchdog_status(), "action": "stop_watchdog", "message": "Watchdog stopped."})
 
 
+def webhook_status() -> Dict[str, Any]:
+    pid = None
+    try:
+        if WEBHOOK_PID_FILE.exists():
+            pid = int(WEBHOOK_PID_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        pid = None
+    return {
+        "service": "tradingview/webhook_server.py",
+        "pid": pid,
+        "running": _process_running(pid),
+        "state": "running" if _process_running(pid) else "stopped",
+        "pid_file": str(WEBHOOK_PID_FILE),
+        "log_file": str(WEBHOOK_LOG_FILE),
+        "port": int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "5056") or 5056),
+        "updated_at": _now(),
+    }
+
+
+def _port_listening(port: int, timeout: float = 1.0) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def start_webhook() -> Dict[str, Any]:
+    current = webhook_status()
+    if current["running"]:
+        return {**current, "action": "start_webhook", "message": "TradingView webhook already running."}
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    WEBHOOK_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env.setdefault("TRADINGVIEW_WEBHOOK_PORT", "5056")
+    with WEBHOOK_LOG_FILE.open("ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, "tradingview/webhook_server.py"],
+            cwd=str(ROOT),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            close_fds=True,
+            env=env,
+        )
+    WEBHOOK_PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    port = int(env["TRADINGVIEW_WEBHOOK_PORT"])
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if process.poll() is not None:
+            break
+        if _port_listening(port):
+            break
+        time.sleep(0.25)
+
+    current = webhook_status()
+    if not current["running"] or not _port_listening(port):
+        if WEBHOOK_PID_FILE.exists():
+            WEBHOOK_PID_FILE.unlink()
+        return {
+            **webhook_status(),
+            "action": "start_webhook",
+            "ok": False,
+            "message": "TradingView webhook failed to start. Check {}".format(WEBHOOK_LOG_FILE),
+        }
+
+    status_payload = {
+        "ngrok_url": "",
+        "webhook_ok": True,
+        "webhook_url": "http://localhost:{}/webhook".format(port),
+        "last_signal": None,
+        "alert_count": 0,
+        "updated": datetime.now(timezone.utc).isoformat(),
+    }
+    WEBHOOK_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WEBHOOK_STATUS_FILE.write_text(json.dumps(status_payload, indent=2), encoding="utf-8")
+    return {**webhook_status(), "action": "start_webhook", "ok": True, "message": "TradingView webhook started."}
+
+
+def stop_webhook(timeout: float = 8.0) -> Dict[str, Any]:
+    current = webhook_status()
+    pid = current.get("pid")
+    if current["running"]:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=timeout)
+        else:
+            os.kill(int(pid), signal.SIGTERM)
+    if WEBHOOK_PID_FILE.exists():
+        WEBHOOK_PID_FILE.unlink()
+    time.sleep(1)
+    return {**webhook_status(), "action": "stop_webhook", "message": "TradingView webhook stopped."}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start/stop/restart MIRO launch.py agents.")
-    parser.add_argument("action", choices=["status", "start", "stop", "restart", "watchdog-status", "watchdog-start", "watchdog-stop"])
+    parser.add_argument("action", choices=["status", "start", "stop", "restart", "watchdog-status", "watchdog-start", "watchdog-stop", "webhook-status", "webhook-start", "webhook-stop"])
     args = parser.parse_args()
     actions = {
         "status": status,
@@ -193,6 +301,9 @@ def main() -> None:
         "watchdog-status": watchdog_status,
         "watchdog-start": start_watchdog,
         "watchdog-stop": stop_watchdog,
+        "webhook-status": webhook_status,
+        "webhook-start": start_webhook,
+        "webhook-stop": stop_webhook,
     }
     json.dump(actions[args.action](), sys.stdout, indent=2)
     print()

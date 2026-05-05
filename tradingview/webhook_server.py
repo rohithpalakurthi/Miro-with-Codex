@@ -15,7 +15,7 @@ Flow:
 
 Setup:
 1. Run this server: python tradingview/webhook_server.py
-2. Run ngrok: ngrok http 5000
+2. Run ngrok: ngrok http 5056
 3. Copy ngrok URL into TradingView alert webhook URL
 4. Set alert message format (see ALERT FORMAT below)
 
@@ -33,8 +33,10 @@ import sys
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
-sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+load_dotenv(os.path.join(ROOT_DIR, ".env"), override=True)
 from tools.telegram_router import send_message
 
 app = Flask(__name__)
@@ -54,6 +56,7 @@ SIGNAL_COMMON = os.path.join(MT5_COMMON, "mirotrade_signal.json")
 
 # --- Settings ---
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mirotrade2026")
+WEBHOOK_PORT   = int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "5056") or 5056)
 ATR_SL_MULT    = 1.5     # SL = ATR * 1.5  (matches v15F)
 ATR_TP_MULT    = 4.5     # TP = ATR * 4.5  (3R, matches v15F TP2)
 RISK_PCT       = 0.01    # 1% risk per trade
@@ -539,17 +542,17 @@ if __name__ == "__main__":
     print("=" * 55)
     print("  MIRO TRADE - TradingView Webhook Server")
     print("=" * 55)
-    print("  Endpoint : http://localhost:5000/webhook")
-    print("  Status   : http://localhost:5000/status")
-    print("  Test     : http://localhost:5000/test?action=BUY&price=4765")
+    print("  Endpoint : http://localhost:{}/webhook".format(WEBHOOK_PORT))
+    print("  Status   : http://localhost:{}/status".format(WEBHOOK_PORT))
+    print("  Test     : http://localhost:{}/test?action=BUY&price=4765".format(WEBHOOK_PORT))
     print("")
     print("  Next steps:")
     print("  1. Open new terminal")
-    print("  2. Run: ngrok http 5000")
+    print("  2. Run: ngrok http {}".format(WEBHOOK_PORT))
     print("  3. Copy the https://xxxx.ngrok.io URL")
     print("  4. In TradingView: Alerts -> Create Alert")
     print("  5. Set webhook URL to: https://xxxx.ngrok.io/webhook")
     print("  6. Set alert message to JSON format (see file header)")
     print("=" * 55)
     print("")
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=WEBHOOK_PORT, debug=False)

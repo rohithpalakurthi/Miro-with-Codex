@@ -4,9 +4,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
+
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from core.state_schema import load_json, save_json
 

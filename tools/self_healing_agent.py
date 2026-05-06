@@ -227,7 +227,7 @@ def _unsafe_reason(check: Dict[str, Any]) -> str | None:
 class SelfHealingAgent:
     def run_once(self) -> Dict[str, Any]:
         if LOCK_FILE.exists() and time.time() - LOCK_FILE.stat().st_mtime < 45:
-            return _save({"ok": True, "status": "locked", "actions": [], "skipped": ["Another self-heal pass is active."]})
+            return {"ok": True, "status": "locked", "actions": [], "skipped": ["Another self-heal pass is active."], "updated_at": _now()}
         LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
         LOCK_FILE.write_text(str(os.getpid()), encoding="utf-8")
 

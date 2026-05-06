@@ -12,6 +12,7 @@ import urllib.request
 sys.path.append(str(Path(__file__).resolve().parents[2]))
 
 from core.state_schema import load_json, save_json
+from backtesting.research.promotion import resolve_promotion
 
 
 SUPERVISOR_REPORT_PATH = "agents/orchestrator/setup_supervisor.json"
@@ -113,6 +114,14 @@ def _agent_checks() -> List[Dict[str, Any]]:
         updated = item.get("updated")
         status = "ok" if raw_status in {"running", "active"} else "warn" if raw_status in {"starting", "warn"} else "blocker"
         detail = "{}: {}".format(raw_status, item.get("detail", ""))
+        if name == "StrategyDiscovery" and status == "warn" and Path("backtesting/reports/autonomous_discovery.json").exists():
+            status = "ok"
+            detail = "running: discovery report available"
+        if name == "MiroDashboard" and status != "ok":
+            dashboard = _dashboard_check()
+            if dashboard["status"] == "ok":
+                status = "ok"
+                detail = "running: dashboard API healthy"
         checks.append(_check(name, status, detail, "agents"))
     return checks
 
@@ -130,7 +139,7 @@ def _dashboard_check(url: str = "http://localhost:5055/api/health") -> Dict[str,
 def _pipeline_checks() -> List[Dict[str, Any]]:
     discovery = load_json("backtesting/reports/autonomous_discovery.json", {}) or {}
     lifecycle = load_json("backtesting/reports/strategy_lifecycle.json", {}) or {}
-    promotion = load_json("backtesting/reports/promotion_status.json", {}) or {}
+    promotion = resolve_promotion("v15f")
     orchestrator = load_json("agents/orchestrator/last_decision.json", {}) or {}
     live_safety = load_json("live_execution/live_safety_status.json", {}) or {}
 

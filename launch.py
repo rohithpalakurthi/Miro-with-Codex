@@ -23,14 +23,19 @@ from tools.telegram_router import send_message
 # Global agent status tracker
 AGENT_STATUS = {}
 STATUS_FILE  = "paper_trading/logs/agents_status.json"
+STATUS_LOCK = threading.Lock()
 
 def set_status(name, status, detail=""):
-    AGENT_STATUS[name] = {"status": status, "detail": detail, "updated": str(datetime.now())}
-    try:
-        os.makedirs("paper_trading/logs", exist_ok=True)
-        with open(STATUS_FILE, "w") as f:
-            json.dump(AGENT_STATUS, f, indent=2)
-    except: pass
+    with STATUS_LOCK:
+        AGENT_STATUS[name] = {"status": status, "detail": detail, "updated": str(datetime.now())}
+        try:
+            os.makedirs("paper_trading/logs", exist_ok=True)
+            temp_file = "{}.{}.{}.tmp".format(STATUS_FILE, os.getpid(), threading.get_ident())
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(AGENT_STATUS, f, indent=2)
+            os.replace(temp_file, STATUS_FILE)
+        except Exception as exc:
+            print("[Launcher] Could not write agent status: {}".format(exc))
 
 # ── Agent runners ──────────────────────────────────────────────
 

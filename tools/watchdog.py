@@ -10,13 +10,14 @@ from typing import Any, Dict
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from tools.agent_supervisor import restart, start, status
+from tools.agent_supervisor import PID_FILE, restart, start, status
 from tools.incident_alerts import send_incident
 from tools.system_health import run_health_check
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WATCHDOG_STATUS = ROOT / "runtime" / "watchdog.json"
+STARTUP_GRACE_SECONDS = 300
 
 
 def _save(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,10 +38,14 @@ def check_once(*, auto_recover: bool = True) -> Dict[str, Any]:
         for c in health.get("checks", [])
     )
 
+    pid_age = None
+    if PID_FILE.exists():
+        pid_age = int(time.time() - PID_FILE.stat().st_mtime)
+
     if auto_recover and not proc["running"]:
         actions.append(start())
         send_incident("Agents were stopped", "Watchdog started launch.py supervisor.", "warn")
-    elif auto_recover and stale_runtime and proc["running"]:
+    elif auto_recover and stale_runtime and proc["running"] and (pid_age is None or pid_age > STARTUP_GRACE_SECONDS):
         actions.append(restart())
         send_incident("Runtime state stale", "Watchdog restarted agents because runtime files stopped updating.", "warn")
     elif severe:
@@ -51,6 +56,8 @@ def check_once(*, auto_recover: bool = True) -> Dict[str, Any]:
         "health_score": health["score"],
         "agent_process": proc,
         "auto_recover": auto_recover,
+        "startup_grace_seconds": STARTUP_GRACE_SECONDS,
+        "pid_age_seconds": pid_age,
         "actions": actions,
         "next_actions": health.get("next_actions", []),
     })

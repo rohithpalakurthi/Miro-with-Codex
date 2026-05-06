@@ -41,6 +41,8 @@ REGIME_FILE  = "agents/master_trader/regime.json"
 BRAIN_FILE   = "agents/master_trader/multi_brain.json"
 DXY_FILE     = "agents/master_trader/dxy_yields.json"
 DEC_LOG      = "agents/position_manager/decisions_log.json"
+ANNOUNCE_FILE = "runtime/telegram_command_announce.json"
+ANNOUNCE_COOLDOWN_SECONDS = 6 * 60 * 60
 
 BASE_URL     = "https://api.telegram.org/bot{}".format(TOKEN)
 
@@ -50,6 +52,24 @@ def send(text):
         send_message(text, category="command", title="Telegram command reply", force=True)
     except:
         pass
+
+
+def _should_send_online_announcement():
+    """Avoid noisy Telegram spam when launch.py or watchdog restarts the command agent."""
+    try:
+        os.makedirs(os.path.dirname(ANNOUNCE_FILE), exist_ok=True)
+        now = time.time()
+        if os.path.exists(ANNOUNCE_FILE):
+            with open(ANNOUNCE_FILE, encoding="utf-8-sig") as f:
+                previous = json.load(f)
+            last_sent = float(previous.get("last_sent", 0) or 0)
+            if now - last_sent < ANNOUNCE_COOLDOWN_SECONDS:
+                return False
+        with open(ANNOUNCE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"last_sent": now, "pid": os.getpid(), "updated": datetime.now().isoformat()}, f, indent=2)
+        return True
+    except:
+        return True
 
 
 def send_photo(buf, caption=""):
@@ -514,7 +534,10 @@ def run():
         return
 
     print("[TeleCmd] Telegram command interface active")
-    send("<b>MIRO COMMAND INTERFACE ONLINE</b>\nSend /help for available commands.")
+    if _should_send_online_announcement():
+        send("<b>MIRO COMMAND INTERFACE ONLINE</b>\nSend /help for available commands.")
+    else:
+        print("[TeleCmd] Online announcement suppressed by cooldown")
 
     last_update_id = None
 

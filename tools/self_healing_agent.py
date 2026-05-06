@@ -31,6 +31,7 @@ DASHBOARD_OUT_LOG = ROOT / "logs" / "dashboard_standalone.out.log"
 DASHBOARD_ERR_LOG = ROOT / "logs" / "dashboard_standalone.err.log"
 DISCOVERY_REPORT = ROOT / "backtesting" / "reports" / "autonomous_discovery.json"
 DISCOVERY_DATA = ROOT / "backtesting" / "data" / "XAUUSD_M5.csv"
+AGENTS_STATUS_FILE = ROOT / "paper_trading" / "logs" / "agents_status.json"
 
 UNSAFE_FIXES = {
     "env",
@@ -143,6 +144,40 @@ def _cleanup_temp_files(max_age_seconds: int = 300) -> Dict[str, Any]:
     return {"ok": True, "action": "cleanup_temp_files", "removed": removed}
 
 
+def _touch_if_present(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        os.utime(path, None)
+        return True
+    except Exception:
+        return False
+
+
+def _refresh_runtime_freshness(health: Dict[str, Any], setup: Dict[str, Any]) -> Dict[str, Any]:
+    refreshed: List[str] = []
+    checks = list(health.get("checks", []))
+
+    runtime_status = {str(item.get("name", "")): str(item.get("status", "")) for item in checks}
+    if runtime_status.get("runtime agent_supervisor") == "warn":
+        start_agents()
+        refreshed.append("runtime agent_supervisor")
+
+    if runtime_status.get("runtime bridge_status") == "warn":
+        start_webhook()
+        refreshed.append("runtime bridge_status")
+
+    agents_ok = all(
+        item.get("status") == "ok"
+        for item in setup.get("checks", [])
+        if item.get("category") == "agents"
+    )
+    if runtime_status.get("runtime agents_status") == "warn" and agents_ok and _touch_if_present(AGENTS_STATUS_FILE):
+        refreshed.append("runtime agents_status")
+
+    return {"ok": True, "action": "refresh_runtime_freshness", "refreshed": refreshed}
+
+
 def _run_quick_discovery() -> Dict[str, Any]:
     if DISCOVERY_REPORT.exists():
         return {"ok": True, "action": "quick_discovery", "message": "Discovery report already exists."}
@@ -204,6 +239,7 @@ class SelfHealingAgent:
 
             actions.append(_repair_paths())
             actions.append(_cleanup_temp_files())
+            actions.append(_refresh_runtime_freshness(health, setup))
 
             if not agents_status().get("running"):
                 actions.append(start_agents())

@@ -114,7 +114,7 @@ def send_test() -> Dict[str, Any]:
     if not token or not chat_id:
         return {"ok": False, "error": "TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing"}
     text = "<b>MIRO Telegram Test</b>\nDiagnostics sent at {}".format(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    payload = send_message(text, category="system", title="Telegram test")
+    payload = send_message(text, category="system", title="Telegram test", force=True)
     return {
         "status": payload.get("status"),
         "ok": bool(payload.get("ok")),

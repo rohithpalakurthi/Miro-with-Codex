@@ -223,10 +223,27 @@ def _port_listening(port: int, timeout: float = 1.0) -> bool:
         return False
 
 
+def _write_webhook_status(port: int) -> None:
+    status_payload = {
+        "ngrok_url": "",
+        "webhook_ok": True,
+        "webhook_url": "http://localhost:{}/webhook".format(port),
+        "last_signal": None,
+        "alert_count": 0,
+        "updated": datetime.now(timezone.utc).isoformat(),
+    }
+    WEBHOOK_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WEBHOOK_STATUS_FILE.write_text(json.dumps(status_payload, indent=2), encoding="utf-8")
+
+
 def start_webhook() -> Dict[str, Any]:
     current = webhook_status()
     if current["running"]:
-        return {**current, "action": "start_webhook", "message": "TradingView webhook already running."}
+        port = int(current.get("port", 5056) or 5056)
+        if _port_listening(port):
+            _write_webhook_status(port)
+            return {**webhook_status(), "action": "start_webhook", "ok": True, "message": "TradingView webhook already running; bridge status refreshed."}
+        return {**current, "action": "start_webhook", "ok": False, "message": "Webhook PID exists, but port {} is not listening.".format(port)}
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     WEBHOOK_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -262,16 +279,7 @@ def start_webhook() -> Dict[str, Any]:
             "message": "TradingView webhook failed to start. Check {}".format(WEBHOOK_LOG_FILE),
         }
 
-    status_payload = {
-        "ngrok_url": "",
-        "webhook_ok": True,
-        "webhook_url": "http://localhost:{}/webhook".format(port),
-        "last_signal": None,
-        "alert_count": 0,
-        "updated": datetime.now(timezone.utc).isoformat(),
-    }
-    WEBHOOK_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    WEBHOOK_STATUS_FILE.write_text(json.dumps(status_payload, indent=2), encoding="utf-8")
+    _write_webhook_status(port)
     return {**webhook_status(), "action": "start_webhook", "ok": True, "message": "TradingView webhook started."}
 
 

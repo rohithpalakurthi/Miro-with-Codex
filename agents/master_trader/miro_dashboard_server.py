@@ -1693,6 +1693,23 @@ def api_setup_wizard_fix():
         result = start_webhook()
     elif action == "telegram_test":
         result = send_telegram_test()
+    elif action == "paper_override":
+        override = set_manual_override(
+            strategy=str(payload.get("strategy", "v15f")),
+            stage="paper_approved",
+            note="Setup Wizard safe paper-only override",
+            actor="setup_wizard",
+        )
+        _invalidate_cache("promotion_status", "research_summary")
+        promotion = resolve_promotion(str(payload.get("strategy", "v15f")))
+        result = {
+            "ok": True,
+            "status": "paper_override_saved",
+            "message": "Paper-only promotion override saved. This does not unlock demo/live MT5 execution.",
+            "override": override,
+            "promotion": promotion,
+        }
+        record_promotion_event(str(payload.get("strategy", "v15f")), "setup_paper_override", promotion, note="Setup Wizard safe paper-only override")
     elif action == "lock_live":
         result = lock_live_mode("Setup wizard safety lock")
     elif action == "kill_switch":
@@ -4576,10 +4593,38 @@ def _risk_timeline_page():
 
 
 def _setup_page():
-    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn good" onclick="fix('start_webhook')">Start Webhook</button><button class="btn" onclick="fix('telegram_test')">Test Telegram</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
+    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}.setup-toast{position:fixed;right:18px;bottom:18px;z-index:20;display:grid;gap:8px;max-width:420px}.setup-toast .toast{border:1px solid var(--line2);border-radius:10px;background:#111922;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:12px 14px;color:var(--text);font-size:12px;line-height:1.35}.setup-toast .toast.good{border-color:rgba(47,209,124,.55)}.setup-toast .toast.warn{border-color:rgba(230,173,50,.55)}.setup-toast .toast.red{border-color:rgba(240,82,82,.55)}.setup-toolbar-note{margin-top:8px;color:var(--muted);font-size:12px}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="setup-toast" id="setupToast"></div><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn good" onclick="fix('start_webhook')">Start Webhook</button><button class="btn good" onclick="fix('telegram_test')">Test Telegram</button><button class="btn" onclick="fix('paper_override')">Paper Override</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div class="setup-toolbar-note">Paper Override is paper-only; it does not unlock demo/live MT5 execution.</div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
     script = """
 let lastWizard=null;
-async function fix(action){if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;if(action==='kill_switch'&&!confirm('KILL SWITCH: pause MIRO, lock live mode, stop agents, and stop watchdog? Dashboard will stay online.'))return;document.getElementById('fixOut').textContent='Running '+action+' and rescanning...';const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});const d=await r.json();document.getElementById('fixOut').textContent=JSON.stringify(d.result||d,null,2);render(d.wizard||d)}
+function toast(message,type='good'){const box=document.getElementById('setupToast');if(!box)return;const el=document.createElement('div');el.className='toast '+type;el.textContent=message;box.appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(6px)';setTimeout(()=>el.remove(),350)},4200)}
+function resultMessage(action,result,wizard){if(!result)return `${action} completed.`;if(result.message)return result.message;if(result.status)return `${action}: ${result.status}`;if(result.ok===true)return `${action} completed.`;if(result.error)return `${action} failed: ${typeof result.error==='string'?result.error:JSON.stringify(result.error)}`;return `${action} completed. Pending: ${wizard?.pending_count??'--'}`}
+function setBusy(busy){document.querySelectorAll('.actions .btn').forEach(b=>{b.disabled=busy;b.style.opacity=busy?'.55':'1'});}
+async function fix(action){
+  if(action==='start_agents'&&!confirm('Start supervised agents from the setup wizard?'))return;
+  if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;
+  if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;
+  if(action==='paper_override'&&!confirm('Apply paper-only promotion override? This does NOT unlock demo/live MT5 execution.'))return;
+  if(action==='lock_live'&&!confirm('Lock live mode now? This is a safe action and does not stop paper monitoring.'))return;
+  if(action==='kill_switch'&&!confirm('KILL SWITCH: pause MIRO, lock live mode, stop agents, and stop watchdog? Dashboard will stay online.'))return;
+  const out=document.getElementById('fixOut');
+  setBusy(true); toast(`Running ${action}...`,'warn'); out.textContent='Running '+action+' and rescanning...';
+  try{
+    const r=await fetch('/api/setup-wizard/fix',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
+    let d={}; try{d=await r.json()}catch(_){d={error:'Non-JSON response from server'}};
+    if(!r.ok){throw new Error(d.error||d.message||('HTTP '+r.status))}
+    out.textContent=JSON.stringify(d.result||d,null,2);
+    render(d.wizard||d);
+    const result=d.result||{};
+    const type=(result.ok===false||result.error)?'red':((d.wizard&&d.wizard.pending_count>0)?'warn':'good');
+    toast(resultMessage(action,result,d.wizard),type);
+  }catch(e){
+    out.textContent='Action failed: '+e.message;
+    toast('Action failed: '+e.message,'red');
+  }finally{
+    setBusy(false);
+    loadStatusBar&&loadStatusBar();
+  }
+}
 function issueCard(x){return `<div class="card" style="margin-bottom:10px"><h3>${esc(x.title)}</h3><div class="row"><span class="${x.status==='blocker'?'red':'amber'}">${esc(x.status)}</span><span>${esc(x.name)}</span><span>${esc(x.detail)}</span></div><div class="desc"><b>Impact:</b> ${esc(x.impact||x.why)}<br><b>How to fix:</b> ${esc(x.how)}<br><b>Command:</b> <span class="sub">${esc(x.command)}</span></div><div class="actions">${x.auto?`<button class="btn good" onclick="fix('${esc(x.action)}')">Fix safely</button>`:`<button class="btn" onclick="fix('${esc(x.action)}')">Manual steps</button>`}<button class="btn" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(x.command)}')">Copy command</button></div></div>`}
 function compactIssue(x){return `<div class="setup-item"><div class="setup-item-top"><span class="setup-pill ${esc(x.status)}">${esc(x.status).toUpperCase()}</span><span class="setup-name" title="${esc(x.name)}">${esc(x.name)}</span></div><div class="setup-detail">${esc(x.title||x.how||x.detail)}</div></div>`}
 function compactAction(a){const bits=String(a||'').split(':');return `<div class="setup-item"><div class="setup-item-top"><span class="setup-pill warn">NEXT</span><span class="setup-name">${esc(bits[0]||'Action')}</span></div><div class="setup-detail">${esc(bits.slice(1).join(':').trim()||a)}</div></div>`}

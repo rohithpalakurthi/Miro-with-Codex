@@ -10,7 +10,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -61,6 +61,82 @@ def _process_running(pid: int | None) -> bool:
         return False
 
 
+def _run_powershell(command: str, timeout: float = 5.0) -> str:
+    if os.name != "nt":
+        return ""
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _command_line(pid: int | None) -> str:
+    if not pid or os.name != "nt":
+        return ""
+    command = (
+        "Get-CimInstance Win32_Process -Filter \"ProcessId = {}\" "
+        "| Select-Object -ExpandProperty CommandLine"
+    ).format(int(pid))
+    return _run_powershell(command)
+
+
+def _expected_process(pid: int | None, marker: str) -> bool:
+    if not _process_running(pid):
+        return False
+    if os.name != "nt":
+        return True
+    command_line = _command_line(pid).lower()
+    return bool(command_line and marker.lower() in command_line and "python" in command_line)
+
+
+def _port_owner(port: int) -> int | None:
+    if os.name == "nt":
+        output = _run_powershell(
+            "Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue "
+            "| Select-Object -First 1 -ExpandProperty OwningProcess".format(int(port))
+        )
+        try:
+            return int(output.splitlines()[0].strip()) if output else None
+        except Exception:
+            return None
+    return None
+
+
+def _matching_pids(marker: str) -> List[int]:
+    if os.name != "nt":
+        return []
+    escaped = marker.replace("'", "''")
+    output = _run_powershell(
+        "Get-CimInstance Win32_Process | "
+        "Where-Object {{ $_.CommandLine -and $_.CommandLine.ToLower().Contains('{}') -and $_.CommandLine.ToLower().Contains('python') }} "
+        "| Select-Object -ExpandProperty ProcessId".format(escaped.lower()),
+        timeout=8,
+    )
+    pids: List[int] = []
+    for line in output.splitlines():
+        try:
+            pids.append(int(line.strip()))
+        except Exception:
+            pass
+    return sorted(set(pids))
+
+
+def _terminate_pids(pids: List[int], timeout: float) -> None:
+    for pid in sorted(set(int(p) for p in pids if p)):
+        if not _process_running(pid):
+            continue
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=timeout)
+        else:
+            os.kill(int(pid), signal.SIGTERM)
+
+
 def _write_status(payload: Dict[str, Any]) -> Dict[str, Any]:
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     payload["updated_at"] = _now()
@@ -70,7 +146,12 @@ def _write_status(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def status() -> Dict[str, Any]:
     pid = _read_pid()
-    running = _process_running(pid)
+    port_pid = _port_owner(5055)
+    if _expected_process(port_pid, "launch.py"):
+        pid = port_pid
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        PID_FILE.write_text(str(pid), encoding="utf-8")
+    running = _expected_process(pid, "launch.py")
     return {
         "service": "launch.py",
         "pid": pid,
@@ -110,13 +191,17 @@ def stop(timeout: float = 12.0) -> Dict[str, Any]:
     current = status()
     pid = current.get("pid")
     if not current["running"]:
+        stale_pids = _matching_pids("launch.py")
+        if stale_pids:
+            _terminate_pids(stale_pids, timeout)
         if PID_FILE.exists():
             PID_FILE.unlink()
         return _write_status({**current, "action": "stop", "message": "Agents already stopped."})
 
     try:
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=timeout)
+            pids = _matching_pids("launch.py") or [int(pid)]
+            _terminate_pids(pids, timeout)
         else:
             os.kill(int(pid), signal.SIGTERM)
             deadline = time.time() + timeout
@@ -203,14 +288,21 @@ def webhook_status() -> Dict[str, Any]:
             pid = int(WEBHOOK_PID_FILE.read_text(encoding="utf-8").strip())
     except Exception:
         pid = None
+    port = int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "5056") or 5056)
+    port_pid = _port_owner(port)
+    if _expected_process(port_pid, "tradingview/webhook_server.py") or _expected_process(port_pid, "tradingview\\webhook_server.py"):
+        pid = port_pid
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        WEBHOOK_PID_FILE.write_text(str(pid), encoding="utf-8")
+    running = _expected_process(pid, "tradingview/webhook_server.py") or _expected_process(pid, "tradingview\\webhook_server.py")
     return {
         "service": "tradingview/webhook_server.py",
         "pid": pid,
-        "running": _process_running(pid),
-        "state": "running" if _process_running(pid) else "stopped",
+        "running": running,
+        "state": "running" if running else "stopped",
         "pid_file": str(WEBHOOK_PID_FILE),
         "log_file": str(WEBHOOK_LOG_FILE),
-        "port": int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "5056") or 5056),
+        "port": port,
         "updated_at": _now(),
     }
 
@@ -286,9 +378,10 @@ def start_webhook() -> Dict[str, Any]:
 def stop_webhook(timeout: float = 8.0) -> Dict[str, Any]:
     current = webhook_status()
     pid = current.get("pid")
-    if current["running"]:
+    if current["running"] or _matching_pids("tradingview"):
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=timeout)
+            pids = _matching_pids("tradingview/webhook_server.py") + _matching_pids("tradingview\\webhook_server.py")
+            _terminate_pids(pids or [int(pid)], timeout)
         else:
             os.kill(int(pid), signal.SIGTERM)
     if WEBHOOK_PID_FILE.exists():

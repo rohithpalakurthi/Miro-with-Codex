@@ -23,6 +23,7 @@ from backtesting.research.promotion import (
     set_manual_override,
     summarize_experiments,
 )
+from core.state_schema import build_paper_state, save_json
 from live_execution.safety import evaluate_live_safety, load_config as load_live_safety_config, save_config as save_live_safety_config
 from tools.reset_state import reset_state
 from tools.system_health import run_health_check
@@ -1648,6 +1649,89 @@ def _scoreboard_payload():
     }
 
 
+def _paper_test_trade() -> dict:
+    """Create one clearly labeled paper-only trade to prove the local pipeline."""
+    paper = _load("paper_state") or {}
+    account = paper.get("account") or {}
+    metrics = paper.get("metrics") or {}
+    price_state = _load("price") or {}
+    balance = float(account.get("balance", paper.get("balance", 10000.0)) or 10000.0)
+    current_price = float(price_state.get("bid") or price_state.get("price") or price_state.get("last") or 4765.0)
+    pnl = 25.0
+    risk_amount = 50.0
+    trade_id = int(paper.get("trade_id", metrics.get("total_closed_trades", 0) + 1) or 1)
+    opened_at = datetime.now(timezone.utc).isoformat()
+    closed_at = datetime.now(timezone.utc).isoformat()
+    closed = paper.get("closed_trades") or (paper.get("trades", {}) or {}).get("closed", [])
+    open_trades = paper.get("open_trades") or (paper.get("positions", {}) or {}).get("open", [])
+    test_trade = {
+        "id": "SETUP-PAPER-{}".format(trade_id),
+        "ticket": "PAPER-{}".format(trade_id),
+        "status": "closed",
+        "strategy": "setup_test_trade",
+        "symbol": "XAUUSD",
+        "timeframe": "setup",
+        "direction": "BUY",
+        "signal_type": "PAPER_TEST_ONLY",
+        "entry_price": round(current_price, 2),
+        "entry_time": opened_at,
+        "exit_price": round(current_price + 2.5, 2),
+        "exit_time": closed_at,
+        "closed_at": closed_at,
+        "sl": round(current_price - 5.0, 2),
+        "tp1": round(current_price + 2.5, 2),
+        "tp2": round(current_price + 5.0, 2),
+        "lot_size": 0.01,
+        "risk_amount": risk_amount,
+        "pnl": pnl,
+        "result": "win",
+        "reason": "Setup Wizard paper-only pipeline verification. Not an MT5/demo order.",
+        "balance_after": round(balance + pnl, 2),
+        "r_multiple": round(pnl / risk_amount, 2),
+    }
+    updated_balance = round(balance + pnl, 2)
+    updated_closed = list(closed) + [test_trade]
+    state = build_paper_state(
+        balance=updated_balance,
+        peak_balance=max(float(account.get("peak_balance", paper.get("peak_balance", balance)) or balance), updated_balance),
+        open_trades=open_trades,
+        closed_trades=updated_closed,
+        trade_id=trade_id + 1,
+        today_pnl=float(account.get("today_pnl", paper.get("today_pnl", 0.0)) or 0.0) + pnl,
+        paper_days=int(metrics.get("paper_days", paper.get("paper_days", 0)) or 0),
+        ea_days=int(metrics.get("ea_days", paper.get("ea_days", 0)) or 0),
+        signal_score=paper.get("signal") or paper.get("signal_score") or {},
+        agents_alive=(paper.get("system") or {}).get("agents_alive", paper.get("agents_alive")),
+        agents_total=(paper.get("system") or {}).get("agents_total", paper.get("agents_total")),
+        agents_status=(paper.get("system") or {}).get("agents_status", paper.get("agents_status", {})),
+    )
+    save_json(FILES["paper_state"], state)
+    _invalidate_cache("paper_state")
+    decision = record_trade_decision(
+        symbol="XAUUSD",
+        strategy="setup_test_trade",
+        decision="BUY",
+        confidence=1.0,
+        entry=test_trade["entry_price"],
+        stop_loss=test_trade["sl"],
+        take_profit=test_trade["tp1"],
+        risk={"risk_amount": risk_amount, "paper_only": True},
+        context={"source": "setup_wizard", "purpose": "pipeline_verification"},
+        outcome={"pnl": pnl, "r_multiple": test_trade["r_multiple"], "paper_only": True},
+        status="paper_test_closed",
+    )
+    result = {
+        "ok": True,
+        "status": "paper_test_trade_recorded",
+        "message": "Paper-only test trade recorded. MT5/demo was not touched.",
+        "trade": test_trade,
+        "decision": decision,
+        "scoreboard": _scoreboard_payload(),
+    }
+    audit("paper_test_trade", result, detail="Setup Wizard paper-only test trade")
+    return result
+
+
 @app.route("/api/scoreboard", methods=["GET"])
 def api_scoreboard():
     payload = _scoreboard_payload()
@@ -1710,6 +1794,8 @@ def api_setup_wizard_fix():
             "promotion": promotion,
         }
         record_promotion_event(str(payload.get("strategy", "v15f")), "setup_paper_override", promotion, note="Setup Wizard safe paper-only override")
+    elif action == "paper_test_trade":
+        result = _paper_test_trade()
     elif action == "lock_live":
         result = lock_live_mode("Setup wizard safety lock")
     elif action == "kill_switch":
@@ -4593,7 +4679,7 @@ def _risk_timeline_page():
 
 
 def _setup_page():
-    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}.setup-toast{position:fixed;right:18px;bottom:18px;z-index:20;display:grid;gap:8px;max-width:420px}.setup-toast .toast{border:1px solid var(--line2);border-radius:10px;background:#111922;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:12px 14px;color:var(--text);font-size:12px;line-height:1.35}.setup-toast .toast.good{border-color:rgba(47,209,124,.55)}.setup-toast .toast.warn{border-color:rgba(230,173,50,.55)}.setup-toast .toast.red{border-color:rgba(240,82,82,.55)}.setup-toolbar-note{margin-top:8px;color:var(--muted);font-size:12px}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="setup-toast" id="setupToast"></div><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn good" onclick="fix('start_webhook')">Start Webhook</button><button class="btn good" onclick="fix('telegram_test')">Test Telegram</button><button class="btn" onclick="fix('paper_override')">Paper Override</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div class="setup-toolbar-note">Paper Override is paper-only; it does not unlock demo/live MT5 execution.</div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
+    body = """<style>.setup-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.setup-panels .panel{min-width:0;overflow:hidden}.setup-list{display:grid;gap:8px;min-width:0}.setup-item{border:1px solid rgba(39,49,59,.78);border-radius:9px;background:#091016;padding:10px;display:grid;gap:6px;min-width:0;overflow:hidden}.setup-item-top{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}.setup-name{font-family:var(--mono);font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.setup-detail{color:var(--muted);font-size:12px;line-height:1.35;overflow-wrap:anywhere}.setup-more{color:var(--muted);font-family:var(--mono);font-size:11px;margin-top:8px}.setup-pill{border:1px solid var(--line2);border-radius:999px;padding:2px 7px;font-family:var(--mono);font-size:10px;white-space:nowrap;flex:0 0 auto}.setup-pill.warn{color:var(--amber);border-color:rgba(230,173,50,.45)}.setup-pill.blocker{color:var(--red);border-color:rgba(240,82,82,.45)}.setup-toast{position:fixed;right:18px;bottom:18px;z-index:20;display:grid;gap:8px;max-width:420px}.setup-toast .toast{border:1px solid var(--line2);border-radius:10px;background:#111922;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:12px 14px;color:var(--text);font-size:12px;line-height:1.35}.setup-toast .toast.good{border-color:rgba(47,209,124,.55)}.setup-toast .toast.warn{border-color:rgba(230,173,50,.55)}.setup-toast .toast.red{border-color:rgba(240,82,82,.55)}.setup-toolbar-note{margin-top:8px;color:var(--muted);font-size:12px}@media(max-width:1100px){.setup-panels{grid-template-columns:1fr}}</style><div class="setup-toast" id="setupToast"></div><div class="grid4" id="setupSummary"></div><div class="panel"><h3>Setup Completion</h3><div class="barline" style="height:14px"><span id="setupProgress" style="width:0%"></span></div><div class="desc" id="setupProgressText">Loading setup status...</div></div><div class="panel"><h3>Guided Repair Actions</h3><div class="desc">Use safe fixes for folders/runtime services. Credentials and tokens require manual .env updates so secrets stay under your control. Every action rescans and updates the checklist automatically.</div><div class="actions"><button class="btn" onclick="fix('scan')">Rescan</button><button class="btn good" onclick="fix('auto_fix_all')">Auto-fix safe items</button><button class="btn good" onclick="fix('repair_paths')">Repair Safe Paths</button><button class="btn good" onclick="fix('start_agents')">Start Agents</button><button class="btn good" onclick="fix('start_watchdog')">Start Watchdog</button><button class="btn good" onclick="fix('start_webhook')">Start Webhook</button><button class="btn good" onclick="fix('telegram_test')">Test Telegram</button><button class="btn" onclick="fix('paper_override')">Paper Override</button><button class="btn good" onclick="fix('paper_test_trade')">Paper Test Trade</button><button class="btn danger" onclick="fix('lock_live')">Lock Live Mode</button><button class="btn danger" onclick="fix('kill_switch')">KILL SWITCH</button></div><div class="setup-toolbar-note">Paper Override and Paper Test Trade are paper-only; they do not unlock demo/live MT5 execution.</div><div id="fixOut" class="log">Ready.</div></div><div class="setup-panels"><div class="panel"><h3>Auto-fixable Now</h3><div id="autoFixable" class="setup-list">Loading...</div></div><div class="panel"><h3>Manual Required</h3><div id="manualRequired" class="setup-list">Loading...</div></div><div class="panel"><h3>Next Best Actions</h3><div id="nextActions" class="setup-list">Loading...</div></div></div><div class="panel"><h3>Issues To Fix</h3><div id="issues">Loading...</div></div><div class="panel"><h3>Setup Commands</h3><div id="commands"></div></div><div class="panel"><h3>Full Checklist</h3><div id="steps"></div></div>"""
     script = """
 let lastWizard=null;
 function toast(message,type='good'){const box=document.getElementById('setupToast');if(!box)return;const el=document.createElement('div');el.className='toast '+type;el.textContent=message;box.appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(6px)';setTimeout(()=>el.remove(),350)},4200)}
@@ -4604,6 +4690,7 @@ async function fix(action){
   if(action==='auto_fix_all'&&!confirm('Run all safe auto-fixes? This can create local folders and start supervised services, but will not edit credentials.'))return;
   if(action==='repair_paths'&&!confirm('Create missing local runtime folders and .env from example if needed?'))return;
   if(action==='paper_override'&&!confirm('Apply paper-only promotion override? This does NOT unlock demo/live MT5 execution.'))return;
+  if(action==='paper_test_trade'&&!confirm('Record one paper-only test trade to prove the local pipeline? MT5/demo will not be touched.'))return;
   if(action==='lock_live'&&!confirm('Lock live mode now? This is a safe action and does not stop paper monitoring.'))return;
   if(action==='kill_switch'&&!confirm('KILL SWITCH: pause MIRO, lock live mode, stop agents, and stop watchdog? Dashboard will stay online.'))return;
   const out=document.getElementById('fixOut');

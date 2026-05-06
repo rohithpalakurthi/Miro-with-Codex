@@ -27,6 +27,18 @@ class OperationsToolsTests(unittest.TestCase):
         self.assertIn("agent_process", result)
         self.assertFalse(result["auto_recover"])
 
+    def test_self_healer_reports_policy_and_safe_actions(self):
+        from tools.self_healing_agent import SelfHealingAgent
+
+        result = SelfHealingAgent().run_once()
+        self.assertTrue(result["ok"])
+        if result.get("status") == "locked":
+            self.assertIn("active", " ".join(result.get("skipped", [])))
+        else:
+            self.assertIn("Safe auto-repair only", result["policy"])
+            self.assertIn("health", result)
+            self.assertIn("setup", result)
+
 
 if __name__ == "__main__":
     unittest.main()

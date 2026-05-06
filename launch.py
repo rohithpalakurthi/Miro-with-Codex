@@ -304,6 +304,16 @@ def run_setup_supervisor():
         set_status("SetupSupervisor", "error", str(e))
         print("[SETUP SUPERVISOR] Fatal: {}".format(e))
 
+def run_self_healer():
+    set_status("SelfHealer", "starting")
+    try:
+        from tools.self_healing_agent import SelfHealingAgent
+        set_status("SelfHealer", "running", "Safe setup/runtime repair every 60s")
+        SelfHealingAgent().run(interval_seconds=60)
+    except Exception as e:
+        set_status("SelfHealer", "error", str(e))
+        print("[SELF HEALER] Fatal: {}".format(e))
+
 def run_autonomous_discovery_loop():
     set_status("StrategyDiscovery", "starting")
     try:
@@ -767,6 +777,7 @@ if __name__ == "__main__":
         threading.Thread(target=run_performance_report,  daemon=True, name="Reporter"),
         threading.Thread(target=run_survival_manager,    daemon=True, name="SurvivalMgr"),
         threading.Thread(target=run_setup_supervisor,     daemon=True, name="SetupSupervisor"),
+        threading.Thread(target=run_self_healer,          daemon=True, name="SelfHealer"),
         threading.Thread(target=run_autonomous_discovery_loop, daemon=True, name="StrategyDiscovery"),
         threading.Thread(target=run_strategy_lifecycle_loop, daemon=True, name="StrategyLifecycle"),
         threading.Thread(target=run_price_feed,          daemon=True, name="PriceFeed"),

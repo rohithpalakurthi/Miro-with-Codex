@@ -18,6 +18,7 @@ from backtesting.research.promotion import resolve_promotion
 SUPERVISOR_REPORT_PATH = "agents/orchestrator/setup_supervisor.json"
 AGENT_STATUS_PATH = "paper_trading/logs/agents_status.json"
 PAUSE_FILE = "agents/master_trader/miro_pause.json"
+SELF_HEALER_STATE_PATH = "runtime/self_healing_agent.json"
 
 WATCHED_FILES = {
     "paper_state": ("paper_trading/logs/state.json", 180),
@@ -51,6 +52,7 @@ CORE_AGENTS = {
     "StrategyDiscovery": 90000,
     "StrategyLifecycle": 900,
     "SurvivalMgr": 900,
+    "SelfHealer": 180,
 }
 
 
@@ -122,6 +124,12 @@ def _agent_checks() -> List[Dict[str, Any]]:
             if dashboard["status"] == "ok":
                 status = "ok"
                 detail = "running: dashboard API healthy"
+        if name == "SelfHealer" and status != "ok":
+            state = load_json(SELF_HEALER_STATE_PATH, {}) or {}
+            age = _mtime_age(SELF_HEALER_STATE_PATH)
+            if state.get("ok") and age is not None and age <= max_age:
+                status = "ok"
+                detail = "running: self-healer state fresh: {}s".format(age)
         checks.append(_check(name, status, detail, "agents"))
     return checks
 

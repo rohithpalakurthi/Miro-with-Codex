@@ -41,10 +41,13 @@ from tools.agent_supervisor import (
     restart as restart_agents,
     start as start_agents,
     start_webhook,
+    start_self_healer,
     start_watchdog,
     status as agents_process_status,
     stop as stop_agents,
+    stop_self_healer,
     stop_watchdog,
+    self_healer_status,
     watchdog_status,
 )
 from tools.daily_routine import run_daily_routine
@@ -101,6 +104,7 @@ FILES = {
     "strategy_lifecycle": "backtesting/reports/strategy_lifecycle.json",
     "survival_state": "agents/orchestrator/survival_state.json",
     "setup_supervisor": "agents/orchestrator/setup_supervisor.json",
+    "self_healer": "runtime/self_healing_agent.json",
     "patterns"       : "agents/master_trader/patterns.json",
     "cot"            : "agents/master_trader/cot_data.json",
     "sentiment"      : "agents/master_trader/sentiment.json",
@@ -1162,6 +1166,35 @@ def api_agents_control():
 @app.route("/api/watchdog/status", methods=["GET"])
 def api_watchdog_status():
     return jsonify(watchdog_status())
+
+
+@app.route("/api/self-healer/status", methods=["GET"])
+def api_self_healer_status():
+    return jsonify({
+        "process": self_healer_status(),
+        "state": _load("self_healer"),
+    })
+
+
+@app.route("/api/self-healer/control", methods=["POST"])
+def api_self_healer_control():
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action", "status")).lower()
+    actions = {
+        "status": self_healer_status,
+        "start": start_self_healer,
+        "stop": stop_self_healer,
+    }
+    if action == "run_once":
+        from tools.self_healing_agent import SelfHealingAgent
+        result = SelfHealingAgent().run_once()
+    elif action in actions:
+        result = actions[action]()
+    else:
+        return jsonify({"ok": False, "error": "Unsupported self-healer action {}".format(action)}), 400
+    audit("self_healer_{}".format(action), result)
+    _invalidate_cache("self_healer")
+    return jsonify(result)
 
 
 @app.route("/api/watchdog/control", methods=["POST"])

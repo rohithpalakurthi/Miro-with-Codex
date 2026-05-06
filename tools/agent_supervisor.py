@@ -23,6 +23,8 @@ WATCHDOG_LOG_FILE = ROOT / "logs" / "watchdog.log"
 WEBHOOK_PID_FILE = RUNTIME_DIR / "tradingview_webhook.pid"
 WEBHOOK_LOG_FILE = ROOT / "logs" / "tradingview_webhook.log"
 WEBHOOK_STATUS_FILE = ROOT / "tradingview" / "bridge_status.json"
+SELF_HEALER_PID_FILE = RUNTIME_DIR / "self_healing_agent.pid"
+SELF_HEALER_LOG_FILE = ROOT / "logs" / "self_healing_agent.log"
 
 
 def _now() -> str:
@@ -281,6 +283,58 @@ def stop_watchdog(timeout: float = 8.0) -> Dict[str, Any]:
     return _write_status({**watchdog_status(), "action": "stop_watchdog", "message": "Watchdog stopped."})
 
 
+def self_healer_status() -> Dict[str, Any]:
+    pid = None
+    try:
+        if SELF_HEALER_PID_FILE.exists():
+            pid = int(SELF_HEALER_PID_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        pid = None
+    return {
+        "service": "tools/self_healing_agent.py",
+        "pid": pid,
+        "running": _process_running(pid),
+        "state": "running" if _process_running(pid) else "stopped",
+        "pid_file": str(SELF_HEALER_PID_FILE),
+        "log_file": str(SELF_HEALER_LOG_FILE),
+        "updated_at": _now(),
+    }
+
+
+def start_self_healer() -> Dict[str, Any]:
+    current = self_healer_status()
+    if current["running"]:
+        return _write_status({**current, "action": "start_self_healer", "message": "Self-healer already running."})
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    SELF_HEALER_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with SELF_HEALER_LOG_FILE.open("ab") as log:
+        process = subprocess.Popen(
+            [sys.executable, "tools/self_healing_agent.py", "--loop"],
+            cwd=str(ROOT),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            close_fds=True,
+        )
+    SELF_HEALER_PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    time.sleep(1)
+    return _write_status({**self_healer_status(), "action": "start_self_healer", "message": "Self-healer started."})
+
+
+def stop_self_healer(timeout: float = 8.0) -> Dict[str, Any]:
+    current = self_healer_status()
+    pid = current.get("pid")
+    if current["running"]:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=timeout)
+        else:
+            os.kill(int(pid), signal.SIGTERM)
+    if SELF_HEALER_PID_FILE.exists():
+        SELF_HEALER_PID_FILE.unlink()
+    time.sleep(1)
+    return _write_status({**self_healer_status(), "action": "stop_self_healer", "message": "Self-healer stopped."})
+
+
 def webhook_status() -> Dict[str, Any]:
     pid = None
     try:
@@ -392,7 +446,7 @@ def stop_webhook(timeout: float = 8.0) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start/stop/restart MIRO launch.py agents.")
-    parser.add_argument("action", choices=["status", "start", "stop", "restart", "watchdog-status", "watchdog-start", "watchdog-stop", "webhook-status", "webhook-start", "webhook-stop"])
+    parser.add_argument("action", choices=["status", "start", "stop", "restart", "watchdog-status", "watchdog-start", "watchdog-stop", "self-healer-status", "self-healer-start", "self-healer-stop", "webhook-status", "webhook-start", "webhook-stop"])
     args = parser.parse_args()
     actions = {
         "status": status,
@@ -402,6 +456,9 @@ def main() -> None:
         "watchdog-status": watchdog_status,
         "watchdog-start": start_watchdog,
         "watchdog-stop": stop_watchdog,
+        "self-healer-status": self_healer_status,
+        "self-healer-start": start_self_healer,
+        "self-healer-stop": stop_self_healer,
         "webhook-status": webhook_status,
         "webhook-start": start_webhook,
         "webhook-stop": stop_webhook,

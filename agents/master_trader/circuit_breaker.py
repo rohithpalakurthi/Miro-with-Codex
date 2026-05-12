@@ -87,7 +87,10 @@ def save_state(state):
 
 def get_account():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return None
         info = mt5.account_info()

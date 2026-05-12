@@ -45,7 +45,10 @@ SYMBOLS = {
 
 def _get_mt5_data(symbol, bars=20):
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         tf = mt5.TIMEFRAME_H1
         rates = mt5.copy_rates_from_pos(symbol, tf, 0, bars)
         if rates is None or len(rates) < 5:
@@ -153,7 +156,10 @@ def _derive_macro_context(sym_data):
 
 def scan_once():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             print("[MultiSym] MT5 not available")
             return

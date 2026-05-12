@@ -15,7 +15,10 @@ Key differences from H1:
 - FVG min size: 3 pips
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import pandas as pd
 import os
 import sys

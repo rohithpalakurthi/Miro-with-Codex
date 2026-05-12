@@ -13,7 +13,10 @@ Run:
     python live_execution/bridge/fix_sltp.py --dry_run
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import pandas as pd
 import os, sys, json, argparse
 from datetime import datetime

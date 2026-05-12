@@ -684,7 +684,10 @@ def nightly_optimization():
     # Refresh session stats after optimization (new backtest data)
     try:
         import json, pandas as pd
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         from strategies.scalper_v15.scalper_v15 import backtest_v15f, PARAMS
         mt5.initialize()
         mt5.login(int(os.getenv("MT5_LOGIN", 0)), password=os.getenv("MT5_PASSWORD", ""), server=os.getenv("MT5_SERVER", ""))

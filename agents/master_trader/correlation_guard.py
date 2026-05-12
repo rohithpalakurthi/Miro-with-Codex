@@ -48,7 +48,10 @@ def get_drawdown_recovery_mode():
         if not os.path.exists(CB_STATE): return False
         with open(CB_STATE) as f:
             state = json.load(f)
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize(): return False
         account = mt5.account_info()
         mt5.shutdown()
@@ -83,7 +86,10 @@ def run():
 
     while True:
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             positions = []
             account   = None
             if mt5.initialize():

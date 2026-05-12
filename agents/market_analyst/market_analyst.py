@@ -11,7 +11,10 @@ at 4764. Expecting sweep of highs then rejection OR breakout
 above 4820 targeting 4900."
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import pandas as pd
 import json
 import os

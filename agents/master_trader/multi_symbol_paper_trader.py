@@ -239,7 +239,10 @@ def _manage_position(state, symbol, pos, high, low, close, atr):
 
 def scan_all_symbols():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
     except ImportError:
         print("[MultiSym] MetaTrader5 not available")
         return

@@ -9,7 +9,10 @@ Runs TWO v15F strategies simultaneously:
 All signals pass through: News + Risk + Orchestrator filters.
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import pandas as pd
 import os, sys, json, time
 from datetime import datetime

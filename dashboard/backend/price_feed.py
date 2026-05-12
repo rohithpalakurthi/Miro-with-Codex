@@ -7,7 +7,10 @@ Writes live MT5 price data to JSON files every 5 seconds
 so the dashboard can display real prices.
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import json
 import os
 import time

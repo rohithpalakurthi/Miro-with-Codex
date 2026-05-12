@@ -72,7 +72,10 @@ def _tg(msg):
 # ── MT5 data fetch ──────────────────────────────────────────────
 def _fetch_mt5_bars(timeframe="M5", bars=3000):
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import pandas as pd
         tf_map = {
             "M1": mt5.TIMEFRAME_M1,

@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import pandas as pd
 from datetime import datetime, timedelta
 import os

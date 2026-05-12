@@ -51,7 +51,10 @@ def run():
     print("[Fib] Fibonacci auto-levels active (every 5min)")
     while True:
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             import pandas as pd
             if not mt5.initialize():
                 time.sleep(300); continue

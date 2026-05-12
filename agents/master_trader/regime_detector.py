@@ -25,7 +25,10 @@ REGIME_FILE = "agents/master_trader/regime.json"
 
 def detect_regime():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import pandas as pd
 
         if not mt5.initialize(): return None

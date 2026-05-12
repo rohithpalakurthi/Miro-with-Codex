@@ -26,7 +26,10 @@ PIVOT_WINDOW = 5     # bars either side to confirm high/low
 
 def _get_h4_data():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import pandas as pd
         if not mt5.initialize():
             return None

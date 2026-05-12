@@ -42,7 +42,10 @@ def _load(path):
 def _get_mt5_snapshot():
     """Grab latest XAUUSD data from MT5."""
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import pandas as pd
 
         if not mt5.initialize():

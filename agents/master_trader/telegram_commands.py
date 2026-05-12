@@ -108,11 +108,11 @@ def _build_price_chart(symbol="XAUUSD", bars=60):
         fig, ax = plt.subplots(figsize=(10, 4), facecolor="#0d0d0d")
         ax.set_facecolor("#0d0d0d")
 
-        for i, row in df.iterrows():
-            color = "#26a69a" if row["close"] >= row["open"] else "#ef5350"
-            ax.plot([i, i], [row["low"], row["high"]], color=color, linewidth=0.8)
-            rect = plt.Rectangle((i - 0.3, min(row["open"], row["close"])),
-                                  0.6, abs(row["close"] - row["open"]),
+        for i, row in enumerate(df.itertuples(index=False)):
+            color = "#26a69a" if row.close >= row.open else "#ef5350"
+            ax.plot([i, i], [row.low, row.high], color=color, linewidth=0.8)
+            rect = plt.Rectangle((i - 0.3, min(row.open, row.close)),
+                                  0.6, abs(row.close - row.open),
                                   color=color)
             ax.add_patch(rect)
 

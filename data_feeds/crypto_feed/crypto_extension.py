@@ -367,9 +367,10 @@ class CryptoExtension:
         trades    = []
         signals   = df[df["trade_signal"] != "none"]
 
-        for idx, row in signals.iterrows():
-            signal      = row["trade_signal"]
-            entry       = row["close"]
+        for row in signals.itertuples():
+            idx         = row.Index
+            signal      = row.trade_signal
+            entry       = row.close
             entry_loc   = df.index.get_loc(idx)
 
             sl, tp = self.calculate_sl_tp(signal, entry, df.iloc[:entry_loc+1])

@@ -153,13 +153,14 @@ class OrchestratorAgent:
         risk_state = self.load_risk_state()
         risk_approved = risk_state.get("approved", True)
         risk_score    = risk_state.get("score", 10)
+        risk_reason   = risk_state.get("reason", "") or risk_state.get("msg", "")
         decision["checks"]["risk"] = {
             "approved" : risk_approved,
             "score"    : risk_score,
-            "reason"   : risk_state.get("reason", "")
+            "reason"   : risk_reason
         }
         if not risk_approved:
-            decision["reasons"].append("RISK: " + risk_state.get("reason", "Risk manager blocked"))
+            decision["reasons"].append("RISK: " + (risk_reason or "Risk manager blocked"))
 
         # --- Check 4: Paper Trading Signal ---
         if state:
@@ -204,12 +205,16 @@ class OrchestratorAgent:
             decision["checks"]["mtf"] = {"passed": True, "reason": "MTF not available"}
 
         # --- Final Verdict ---
+        news_ok = (news_safe or NEWS_BLOCK_OVERRIDE)
+        health_ok = (health >= 5)
+        capacity_ok = (not state or len(state.get("open_trades", [])) < 3)
+
         all_checks_passed = (
-            (news_safe or NEWS_BLOCK_OVERRIDE) and
-            health >= 5 and
+            news_ok and
+            health_ok and
             risk_approved and
             mtf_aligned and
-            (not state or len(state.get("open_trades", [])) < 3)
+            capacity_ok
         )
 
         if all_checks_passed:
@@ -218,6 +223,16 @@ class OrchestratorAgent:
             decision["reasons"].append("All systems green - ready to trade")
         else:
             decision["verdict"] = "NO-GO"
+            if not news_ok: decision["reasons"].append("FAIL: News blocking")
+            if not health_ok: decision["reasons"].append("FAIL: Portfolio health")
+            if not risk_approved: decision["reasons"].append("FAIL: Risk manager")
+            if not mtf_aligned: decision["reasons"].append("FAIL: MTF alignment")
+            if not capacity_ok: decision["reasons"].append("FAIL: Capacity reached")
+
+        # Log details to stdout for monitoring
+        print("[Orchestrator] Verdict: {} | Confidence: {}%".format(decision["verdict"], decision["confidence"]))
+        if not all_checks_passed:
+            print("[Orchestrator] Blockers: {}".format(", ".join(decision["reasons"])))
 
         return decision
 

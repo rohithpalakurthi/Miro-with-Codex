@@ -53,11 +53,11 @@ def generate_html_report(csv_path=BACKTEST_CSV, output_path=REPORT_OUTPUT):
 
     # Trade rows
     trade_rows = ""
-    for _, row in df.tail(20).iterrows():
-        color  = "#00c87a" if row["result"] == "win" else "#e03040"
-        pnl_str = "+${:.2f}".format(row["pnl"]) if row["pnl"] > 0 else "-${:.2f}".format(abs(row["pnl"]))
-        sig_bg  = "rgba(0,200,122,.2)" if row["signal"] == "BUY" else "rgba(224,48,64,.2)"
-        sig_col = "#00c87a" if row["signal"] == "BUY" else "#e03040"
+    for row in df.tail(20).itertuples(index=False):
+        color  = "#00c87a" if row.result == "win" else "#e03040"
+        pnl_str = "+${:.2f}".format(row.pnl) if row.pnl > 0 else "-${:.2f}".format(abs(row.pnl))
+        sig_bg  = "rgba(0,200,122,.2)" if row.signal == "BUY" else "rgba(224,48,64,.2)"
+        sig_col = "#00c87a" if row.signal == "BUY" else "#e03040"
         trade_rows += """
         <tr>
             <td><span style="background:{sig_bg};color:{sig_col};padding:2px 8px;border-radius:3px;font-size:11px;font-weight:700">{sig}</span></td>

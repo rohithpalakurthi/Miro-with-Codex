@@ -55,7 +55,7 @@ MT5_COMMON    = os.path.join(_appdata, "MetaQuotes", "Terminal", "Common", "File
 SIGNAL_COMMON = os.path.join(MT5_COMMON, "mirotrade_signal.json")
 
 # --- Settings ---
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mirotrade2026")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 WEBHOOK_PORT   = int(os.getenv("TRADINGVIEW_WEBHOOK_PORT", "5056") or 5056)
 ATR_SL_MULT    = 1.5     # SL = ATR * 1.5  (matches v15F)
 ATR_TP_MULT    = 4.5     # TP = ATR * 4.5  (3R, matches v15F TP2)
@@ -303,9 +303,18 @@ def webhook():
 
         print("\n[WEBHOOK] Received: {}".format(data))
 
-        # Validate secret if provided
-        secret = data.get("secret", "")
-        if secret and secret != WEBHOOK_SECRET:
+        # Validate secret
+        secret = data.get("secret")
+        if not WEBHOOK_SECRET:
+            print("[WEBHOOK] ERROR: WEBHOOK_SECRET not set in environment")
+            log_webhook(data, "ERROR", "Server configuration error")
+            return jsonify({"status": "error", "reason": "Server configuration error"}), 500
+
+        if not secret:
+            log_webhook(data, "REJECTED", "Secret missing")
+            return jsonify({"status": "rejected", "reason": "Secret required"}), 403
+
+        if secret != WEBHOOK_SECRET:
             log_webhook(data, "REJECTED", "Invalid secret")
             return jsonify({"status": "rejected", "reason": "Invalid secret"}), 403
 

@@ -901,6 +901,10 @@ alertcondition(is_news_open,                   "NEWS TIME",      "News window op
 //    TREND    = 3.0R  (big runner)
 //    REENTRY  = 1.5R  (reduced — lower conviction setup)
 //    REVERSAL = 1.2R  (tight — counter-trend)
+//
+//  SECURITY NOTE:
+//  Replace "YOUR_SECRET_HERE" in the alert() calls below with the same
+//  WEBHOOK_SECRET you have set in your server's .env file.
 // ═══════════════════════════════════════════════════════════
 
 // Detect fresh entry on current bar
@@ -914,13 +918,13 @@ if _just_entered_long
     _tp1 = str.tostring(math.round(close + atr * sl_mult * rr_tp1, 2))
     if long_trend
         _tp2 = str.tostring(math.round(close + atr * sl_mult * 3.0, 2))
-        alert('{"action":"BUY","signal_type":"BUY_TREND","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"mirotrade2026"}', alert.freq_once_per_bar)
+        alert('{"action":"BUY","signal_type":"BUY_TREND","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"YOUR_SECRET_HERE"}', alert.freq_once_per_bar)
     else if long_reentry
         _tp2 = str.tostring(math.round(close + atr * sl_mult * 1.5, 2))
-        alert('{"action":"BUY","signal_type":"BUY_REENTRY","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"mirotrade2026"}', alert.freq_once_per_bar)
+        alert('{"action":"BUY","signal_type":"BUY_REENTRY","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"YOUR_SECRET_HERE"}', alert.freq_once_per_bar)
     else if long_reversal
         _tp2 = str.tostring(math.round(close + atr * sl_mult * 1.2, 2))
-        alert('{"action":"BUY","signal_type":"BUY_REVERSAL","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"mirotrade2026"}', alert.freq_once_per_bar)
+        alert('{"action":"BUY","signal_type":"BUY_REVERSAL","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"YOUR_SECRET_HERE"}', alert.freq_once_per_bar)
 
 // SELL entry alerts
 if _just_entered_short
@@ -929,10 +933,10 @@ if _just_entered_short
     _tp1 = str.tostring(math.round(close - atr * sl_mult * rr_tp1, 2))
     if short_trend
         _tp2 = str.tostring(math.round(close - atr * sl_mult * 3.0, 2))
-        alert('{"action":"SELL","signal_type":"SELL_TREND","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"mirotrade2026"}', alert.freq_once_per_bar)
+        alert('{"action":"SELL","signal_type":"SELL_TREND","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"YOUR_SECRET_HERE"}', alert.freq_once_per_bar)
     else if short_reentry
         _tp2 = str.tostring(math.round(close - atr * sl_mult * 1.5, 2))
-        alert('{"action":"SELL","signal_type":"SELL_REENTRY","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"mirotrade2026"}', alert.freq_once_per_bar)
+        alert('{"action":"SELL","signal_type":"SELL_REENTRY","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"YOUR_SECRET_HERE"}', alert.freq_once_per_bar)
     else if short_reversal
         _tp2 = str.tostring(math.round(close - atr * sl_mult * 1.2, 2))
-        alert('{"action":"SELL","signal_type":"SELL_REVERSAL","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"mirotrade2026"}', alert.freq_once_per_bar)
+        alert('{"action":"SELL","signal_type":"SELL_REVERSAL","price":' + _p + ',"sl":' + _sl + ',"tp1":' + _tp1 + ',"tp2":' + _tp2 + ',"indicator":"v15F","secret":"YOUR_SECRET_HERE"}', alert.freq_once_per_bar)

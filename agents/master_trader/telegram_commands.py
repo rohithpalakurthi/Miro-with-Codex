@@ -88,7 +88,10 @@ def send_photo(buf, caption=""):
 def _build_price_chart(symbol="XAUUSD", bars=60):
     """Generate a H1 candlestick chart as PNG bytes. Returns None if matplotlib/MT5 unavailable."""
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
@@ -208,7 +211,10 @@ def set_paused(val):
 
 def get_positions():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return []
         pos = list(mt5.positions_get(symbol="XAUUSD") or [])
@@ -220,7 +226,10 @@ def get_positions():
 
 def get_account():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return None
         info = mt5.account_info()
@@ -232,7 +241,10 @@ def get_account():
 
 def close_all_positions():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return []
         positions = mt5.positions_get(symbol="XAUUSD") or []

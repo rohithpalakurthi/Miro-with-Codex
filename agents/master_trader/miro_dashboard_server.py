@@ -611,7 +611,10 @@ def _build_autonomy_readiness(strategy="v15f", mt5_state=None, live_safety=None)
 
 def _get_mt5_state():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return {"connected": False, "positions": [], "account": {}}
         positions = []
@@ -913,7 +916,10 @@ def api_close_all():
     closed = []
     errors = []
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return jsonify({"status": "error", "message": "MT5 init failed"}), 500
 

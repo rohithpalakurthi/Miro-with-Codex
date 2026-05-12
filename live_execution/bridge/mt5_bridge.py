@@ -14,7 +14,10 @@ MQL5 EA writes trade result → Python reads and logs it
 This is the simplest reliable method that works on Windows with MT5.
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import json
 import os
 import time

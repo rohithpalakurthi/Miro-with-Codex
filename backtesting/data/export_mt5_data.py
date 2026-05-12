@@ -11,7 +11,10 @@ load_dotenv()
 
 
 def connect_mt5():
-    import MetaTrader5 as mt5
+    try:
+        import MetaTrader5 as mt5
+    except ImportError:
+        import mock_mt5 as mt5
 
     if not mt5.initialize():
         raise RuntimeError("MT5 initialize failed: {}".format(mt5.last_error()))

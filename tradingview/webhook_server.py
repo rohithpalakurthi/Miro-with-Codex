@@ -147,7 +147,10 @@ def check_mtf(signal):
 def _get_mt5_balance():
     """Read live account balance from MT5. Falls back to 10000 if unavailable."""
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if mt5.initialize():
             acc = mt5.account_info()
             mt5.shutdown()
@@ -165,7 +168,10 @@ def check_existing_position():
     Prevents stacking multiple trades on the same symbol.
     """
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if mt5.initialize():
             positions = mt5.positions_get(symbol="XAUUSD")
             mt5.shutdown()
@@ -180,7 +186,10 @@ def check_existing_position():
 def get_atr():
     """Fetch current H1 ATR(14) from MT5 for SL/TP calculation."""
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import pandas as pd
         if mt5.initialize():
             rates = mt5.copy_rates_from_pos("XAUUSD", mt5.TIMEFRAME_H1, 0, 50)

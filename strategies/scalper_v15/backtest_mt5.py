@@ -33,7 +33,10 @@ os.makedirs(RESULTS_DIR, exist_ok=True)
 
 def connect_mt5():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return None, None
         login    = int(os.getenv("MT5_LOGIN", 0))

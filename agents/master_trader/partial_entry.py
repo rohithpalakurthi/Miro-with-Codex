@@ -120,7 +120,10 @@ def check_add_tranches():
     Main loop: check all active partial entries and add tranches when triggered.
     """
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return
         tick = mt5.symbol_info_tick("XAUUSD")
@@ -226,7 +229,10 @@ def check_add_tranches():
 def _place_add(pos, lots, dirn, label, price):
     """Place an MT5 market order to add to a position."""
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return False
 
@@ -298,7 +304,10 @@ def run():
 
             # Cleanup closed positions
             try:
-                import MetaTrader5 as mt5
+                try:
+                    import MetaTrader5 as mt5
+                except ImportError:
+                    import mock_mt5 as mt5
                 if mt5.initialize():
                     positions = mt5.positions_get(symbol="XAUUSD") or []
                     open_tickets = {p.ticket for p in positions}

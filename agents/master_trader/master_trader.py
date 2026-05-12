@@ -183,7 +183,10 @@ class MasterTraderAgent:
         Returns structured dict ready for LLM consumption.
         """
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             import pandas as pd
 
             if not mt5.initialize():
@@ -299,7 +302,10 @@ class MasterTraderAgent:
 
     def get_positions(self):
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             if not mt5.initialize():
                 return []
             positions = list(mt5.positions_get(symbol="XAUUSD") or [])
@@ -310,7 +316,10 @@ class MasterTraderAgent:
 
     def get_account(self):
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             if not mt5.initialize():
                 return {"balance": 10000, "equity": 10000, "margin_free": 10000}
             info = mt5.account_info()
@@ -922,7 +931,10 @@ RULES:
     def execute_entry(self, entry_signal, account, intel=None):
         """Open a new position based on MIRO's signal."""
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
 
             intel      = intel or {}
             action     = entry_signal["action"]
@@ -1087,7 +1099,10 @@ RULES:
     def execute_position_action(self, action_dict, positions_info):
         """Execute MIRO's decision on an open position."""
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
 
             ticket    = action_dict.get("ticket")
             action    = action_dict.get("action", "HOLD")

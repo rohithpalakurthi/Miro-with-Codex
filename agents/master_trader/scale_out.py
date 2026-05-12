@@ -59,7 +59,10 @@ def save_scale_state(state):
 
 def get_atr_h1():
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         import pandas as pd
         if not mt5.initialize():
             return 10.0
@@ -125,7 +128,10 @@ def is_trend_favorable(direction):
 
 def close_partial(ticket, volume, direction):
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return False, 0
         tick  = mt5.symbol_info_tick("XAUUSD")
@@ -155,7 +161,10 @@ def close_partial(ticket, volume, direction):
 
 def modify_sl(ticket, new_sl, tp):
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return False
         req = {
@@ -175,7 +184,10 @@ def modify_sl(ticket, new_sl, tp):
 def check_scale_out():
     """Main scale-out check — call every 15 seconds."""
     try:
-        import MetaTrader5 as mt5
+        try:
+            import MetaTrader5 as mt5
+        except ImportError:
+            import mock_mt5 as mt5
         if not mt5.initialize():
             return
         positions = list(mt5.positions_get(symbol="XAUUSD") or [])

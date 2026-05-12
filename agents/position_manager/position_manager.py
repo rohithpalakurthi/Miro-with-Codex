@@ -73,7 +73,10 @@ class PositionManagerAgent:
     def get_positions(self):
         """Fetch all open XAUUSD positions from MT5."""
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             if not mt5.initialize():
                 return []
             positions = mt5.positions_get(symbol="XAUUSD") or []
@@ -86,7 +89,10 @@ class PositionManagerAgent:
     def get_market_context(self):
         """Fetch live market data from MT5: price, ATR, EMAs, RSI, session."""
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             import pandas as pd
 
             if not mt5.initialize():
@@ -177,7 +183,10 @@ class PositionManagerAgent:
     def close_position(self, ticket, volume, direction, reason):
         """Close a position (full or partial) via MT5."""
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             if not mt5.initialize():
                 return False, "MT5 init failed"
 
@@ -211,7 +220,10 @@ class PositionManagerAgent:
     def modify_sl(self, ticket, new_sl, tp):
         """Move SL of a position via MT5."""
         try:
-            import MetaTrader5 as mt5
+            try:
+                import MetaTrader5 as mt5
+            except ImportError:
+                import mock_mt5 as mt5
             if not mt5.initialize():
                 return False
 

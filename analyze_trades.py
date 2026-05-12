@@ -1,4 +1,7 @@
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 from datetime import datetime, timedelta
 
 if not mt5.initialize():

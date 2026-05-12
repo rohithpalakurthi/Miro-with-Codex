@@ -10,7 +10,10 @@ No tvdatafeed needed — works on Python 3.14.
 
 import json, os, sys, time
 import pandas as pd
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 from datetime import datetime
 from dotenv import load_dotenv
 

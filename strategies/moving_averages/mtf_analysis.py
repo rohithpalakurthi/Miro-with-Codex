@@ -18,7 +18,10 @@ This single filter eliminates counter-trend trades
 and is expected to raise win rate by 10-15%.
 """
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+except ImportError:
+    import mock_mt5 as mt5
 import pandas as pd
 import os
 import sys

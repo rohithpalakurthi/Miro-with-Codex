@@ -265,11 +265,11 @@ class MasterTraderAgent:
             # Recent candles summary for LLM (last 8 H1 as OHLC)
             h1_summary = []
             if not h1.empty:
-                for _, row in h1.tail(8).iterrows():
-                    dt = datetime.fromtimestamp(row["time"])
+                for row in h1.tail(8).itertuples(index=False):
+                    dt = datetime.fromtimestamp(row.time)
                     h1_summary.append("{} O:{:.2f} H:{:.2f} L:{:.2f} C:{:.2f} V:{:.0f}".format(
                         dt.strftime("%m/%d %H:%M"),
-                        row["open"], row["high"], row["low"], row["close"], row["tick_volume"]))
+                        row.open, row.high, row.low, row.close, row.tick_volume))
 
             # Previous day high/low from H1
             prev_day_candles = h1.tail(24) if len(h1) >= 24 else h1

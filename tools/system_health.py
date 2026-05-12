@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,8 +103,46 @@ def _env_status(key: str, *, required: bool) -> Dict[str, str]:
 
 
 def run_health_check() -> Dict[str, Any]:
-    load_dotenv(ROOT / ".env", override=True)
+    if load_dotenv:
+        load_dotenv(ROOT / ".env", override=True)
     checks: List[Dict[str, str]] = []
+
+    # 1. Dependency Checks
+    import importlib.util
+    deps = ["MetaTrader5", "pandas", "numpy", "flask", "requests", "dotenv"]
+    for dep in deps:
+        found = importlib.util.find_spec(dep) is not None if dep != "dotenv" else importlib.util.find_spec("dotenv") is not None
+        # Handle cases like python-dotenv which is imported as 'dotenv'
+        if not found and dep == "dotenv":
+             found = importlib.util.find_spec("dotenv") is not None
+
+        checks.append(_check(
+            "dep {}".format(dep),
+            "ok" if found else "blocker",
+            "installed" if found else "missing",
+            "Required library for the framework to function."
+        ))
+
+    # 2. Process Checks (MT5)
+    import subprocess
+    mt5_running = False
+    try:
+        if sys.platform == "win32":
+            output = subprocess.check_output(['tasklist'], string=True)
+            mt5_running = "terminal.exe" in output.lower()
+        else:
+            # Linux check for wine/mt5
+            output = subprocess.check_output(['ps', 'ax'], stderr=subprocess.STDOUT).decode('utf-8')
+            mt5_running = "terminal.exe" in output.lower() or "metatrader" in output.lower()
+    except Exception:
+        pass
+
+    checks.append(_check(
+        "process MT5",
+        "ok" if mt5_running else "warn",
+        "running" if mt5_running else "not found",
+        "MT5 terminal must be open for live bridge/data feed."
+    ))
 
     for key in REQUIRED_ENV:
         env = _env_status(key, required=True)

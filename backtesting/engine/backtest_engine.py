@@ -97,9 +97,10 @@ class BacktestEngine:
     def run(self, df):
         signals = df[df["trade_signal"] != "none"]
         print("Running backtest on {} signals...".format(len(signals)))
-        for idx, row in signals.iterrows():
-            signal      = row["trade_signal"]
-            entry_price = row["close"] + (SPREAD_PIPS if signal=="BUY" else -SPREAD_PIPS)
+        for row in signals.itertuples():
+            idx         = row.Index
+            signal      = row.trade_signal
+            entry_price = row.close + (SPREAD_PIPS if signal=="BUY" else -SPREAD_PIPS)
             entry_loc   = df.index.get_loc(idx)
             date_str    = str(idx.date())
             if self.daily_pnl.get(date_str, 0) <= -(self.initial_balance * MAX_DAILY_LOSS_PCT):
